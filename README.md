@@ -14,7 +14,7 @@ The Minty schema (`pettycashv3`) as one Python package, shared by every backend:
 Pin the tag's archive, as with minty-shared, never `git+`. The `python:3.13-slim` images have no git.
 
 ```
-minty-db @ https://github.com/minty-oliveandvine/minty-db/archive/refs/tags/v0.1.tar.gz
+minty-db @ https://github.com/minty-live/minty-db/archive/refs/tags/v0.1.tar.gz
 ```
 
 ```python

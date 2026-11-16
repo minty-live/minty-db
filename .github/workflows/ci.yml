@@ -1,7 +1,7 @@
 # Lint, the generated-models check and the tests - on SQLite and on a Postgres built from the
 # packaged schema file.
 #
-# NOT a call into minty-oliveandvine/.github, like minty-shared-py: a library has no service to
+# NOT a call into minty-live/.github, like minty-shared-py: a library has no service to
 # boot. With two Python packages now, both become `py-package.yml` in that repo (a GitHub-visible
 # change, so it waits for the owner's yes); until then each keeps this short job.
 name: ci
