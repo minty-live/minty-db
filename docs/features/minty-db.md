@@ -104,7 +104,9 @@ company stays NULL until assigned by hand (Minty's `scripts/schema_migration/sub
 owner's list at the December load). Not re-runnable (a second run stops at the guard); the way back
 is its `_down.sql`. v0.9 contains v0.8, so a service on v0.9 needs BOTH patches in its database.
 Applied 2026-11-13 on local `postgres` (1 subscriber), `pettycashv3_data` (0), Supabase `pettycashv3`
-(3 payers copied, then 6 assigned by hand - 9 subscribers) and Supabase `development` (2). Old code
+(3 payers copied, then 6 assigned by hand - 9 subscribers; 2026-11-16 Angelika's 3 sole-admin companies
+added - 12) and Supabase `development` (2). Local `postgres` got Angelika on her 6 unassigned companies
+the same day (7 subscribers). Old code
 ignores the column. Pinned by
 `test_the_subscriber_patch_matches_a_fresh_build_copies_the_payers_and_its_down_patch_reverses_it`.
 
