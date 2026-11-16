@@ -2526,6 +2526,14 @@ CREATE UNIQUE INDEX uq_ebax_entity_xero_account
     ON pettycash_test.entity_bill_account_xero (entity_id, xero_account_id)
  WHERE xero_account_id <> '';
 
+-- One Xero organisation, at most one company holding it (2026-11-16): the database half of
+-- accounts-api's connect check (xero/services/connect.py live_org_claimant). Partial, because a
+-- disconnected company keeps its organisation (2026-11-10) and is no claim on it - any number may.
+-- An onboarding company holding one reads as connected, so it counts. NULL is never compared.
+CREATE UNIQUE INDEX uq_entities_connected_xero_org
+    ON pettycash_test.entities (xero_org_id)
+ WHERE status <> 'disconnected';
+
 CREATE UNIQUE INDEX uq_bapm_one_default
     ON pettycash_test.billing_account_payment_method (billing_group_id)
  WHERE is_default;

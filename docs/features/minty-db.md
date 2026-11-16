@@ -110,6 +110,19 @@ the same day (7 subscribers). Old code
 ignores the column. Pinned by
 `test_the_subscriber_patch_matches_a_fresh_build_copies_the_payers_and_its_down_patch_reverses_it`.
 
+`2026-11-16_entity_one_connected_org.sql` (**v0.10**; owner-approved 2026-11-16): the unique index
+`uq_entities_connected_xero_org` - one Xero organisation, at most one company whose `status` is not
+`disconnected`. The rule itself is old (Flask's "one org = one entity", tightened 2026-10-09) and
+accounts-api holds it at connect time (`connect.live_org_claimant`); the index closes the race of two
+connects at once. A disconnected company keeps its organisation (2026-11-10) and is never counted; an
+`onboarding` one holding it is. The model carries it (`PARTIAL_UNIQUE`). No data changes; a database
+already breaking the rule is refused with each clashing organisation named. Not re-runnable (guard);
+the way back is its `_down.sql`. Applied 2026-11-16 on local `postgres` (50 holding, 10 disconnected
+keeping one) and `pettycashv3_data` (48, 6); not yet on Supabase. **Before an API pins v0.10:**
+accounts-api's `test_every_duplicate_claimant_is_examined` seeds two connected companies on one
+organisation, which the index now refuses - rewrite it at that bump (the other four suites pass on
+v0.10). Pinned by `test_the_one_connected_org_patch_matches_a_fresh_build_and_holds_the_rule`.
+
 `2026-11-10_bill_contact_ids.sql` (a DATA repair, no schema change; owner: "fix it"): the v2->v3 load wrote Xero's ContactID into `bill.contact_id`, which names a `xero_contact_sync` row, so loaded bills opened with no supplier picked. Each such bill is linked by the Xero id in its company, else by the supplier's name (case and spaces ignored), else to a restored supplier row; a bill of a company that no longer exists is left (no row can be made for it). Re-runnable; the before/after SELECTs are the report. Applied 2026-11-10 on local `postgres` only (snapshot `backups/pg/postgres_prebillcontacts20261110.dump`): 1,548 of 1,550 linked, the 2 left belong to the companies deleted on 2026-11-09 (Minty's SWITCH 2c-0). Minty's load runs the same statements at the end of 03 (`gen.py` `BILL_CONTACTS`, check R14; rehearsed ALL GREEN). Pinned by `test_the_bill_contact_repair_links_each_bill_to_a_supplier_row`.
 
 `pettycashv3` (and local `postgres`) also hold `sessions`, Flask-Session's table. It is outside the schema file and has no model; it goes with Flask's session cutover.

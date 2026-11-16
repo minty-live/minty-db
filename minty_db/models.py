@@ -355,6 +355,9 @@ class Entity(UpdatedAtMixin):
 
     class Meta:
         db_table = 'entities'
+        constraints = [
+            models.UniqueConstraint(fields=['xero_org_id'], condition=~models.Q(status="disconnected"), name='uq_entities_connected_xero_org'),
+        ]
 
 
 class EntityAccountXero(models.Model):

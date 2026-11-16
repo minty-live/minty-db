@@ -1030,3 +1030,65 @@ def test_the_subscriber_patch_matches_a_fresh_build_copies_the_payers_and_its_do
         conn.close()
     finally:
         pg.drop_database(name)
+
+
+ONE_ORG_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-16_entity_one_connected_org.sql"
+ONE_ORG_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-16_entity_one_connected_org_down.sql"
+
+
+@postgres_only
+def test_the_one_connected_org_patch_matches_a_fresh_build_and_holds_the_rule():
+    """2026-11-16 (owner-approved): one Xero organisation, at most one company that is not
+    disconnected (uq_entities_connected_xero_org) - the database half of accounts-api's
+    live_org_claimant. Disconnected companies keep their organisation (2026-11-10) and are never
+    counted. Down then up lands on a fresh build; a second run stops at its guard; a database that
+    already breaks the rule is refused with the clashing organisation named."""
+    import uuid
+
+    from minty_db.testing import pg
+
+    base = os.environ.get("MINTY_TEST_PG_DBNAME", "minty_test")
+    name = f"{base}_one_org"
+    try:
+        built = pg.build(name)
+        conn = pg.connect(built.uri)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET search_path = pettycashv3")
+        url = built.uri + "?schema=pettycashv3"
+        assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
+        expected = _catalogue(conn)
+
+        down = _run_cli("patch", str(ONE_ORG_DOWN), "--apply", database_url=url)
+        assert down.returncode == 0, down.stdout + down.stderr
+
+        org = str(uuid.uuid4())
+        live, kept, clash = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        cur.execute(
+            "INSERT INTO entities (id, name, status, xero_org_id) VALUES "
+            "(%s, 'Live', 'connected', %s), (%s, 'Kept', 'disconnected', %s), (%s, 'Clash', 'connected', %s)",
+            (live, org, kept, org, clash, org),
+        )
+        refused = _run_cli("patch", str(ONE_ORG_PATCH), "--apply", database_url=url)
+        assert refused.returncode != 0 and org in refused.stdout + refused.stderr
+
+        cur.execute("UPDATE entities SET status = 'disconnected' WHERE id = %s", (clash,))
+        done = _run_cli("patch", str(ONE_ORG_PATCH), "--apply", database_url=url)
+        assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        got = _catalogue(conn)
+        diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
+        assert not diff, diff
+
+        # Any number disconnected beside one connected; a second one not disconnected is refused,
+        # an onboarding company holding it included (it reads as connected).
+        for status in ("connected", "onboarding"):
+            with pytest.raises(Exception, match="uq_entities_connected_xero_org"):
+                cur.execute("UPDATE entities SET status = %s WHERE id = %s", (status, clash))
+        cur.execute("UPDATE entities SET status = 'disconnected' WHERE id = %s", (live,))
+        cur.execute("UPDATE entities SET status = 'connected' WHERE id = %s", (clash,))  # moved: allowed
+
+        again = _run_cli("patch", str(ONE_ORG_PATCH), "--apply", database_url=url)
+        assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
+        conn.close()
+    finally:
+        pg.drop_database(name)

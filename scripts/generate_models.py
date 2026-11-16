@@ -97,6 +97,10 @@ PARTIAL_UNIQUE = {
         "(status = ANY (ARRAY['pending'::transfer_status, 'charging'::transfer_status, 'charged'::transfer_status]))",
         'models.Q(status__in=["pending", "charging", "charged"])',
     ),
+    "uq_entities_connected_xero_org": (
+        "(status <> 'disconnected'::entity_status)",
+        '~models.Q(status="disconnected")',
+    ),
 }
 
 # Unique indexes only the database enforces, by name: the model carries no constraint for them.
