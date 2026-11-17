@@ -129,8 +129,9 @@ and `entities.sells_delivery` (BOOLEAN NULL, beside `uses_sales_cash`) - onboard
 screen (Figma 464:73 row 1): Sales - Electronic Payment and Sales - Delivery ticked or not, which
 decides the sales-method lists Petty Cash Settings asks for. Sales - Cash is `uses_sales_cash`. NULL =
 not chosen: minty-onboarding-api lets the business type pick. No backfill. Not re-runnable (guard);
-the way back is its `_down.sql`. Applied 2026-11-17 on local `postgres` only (87 companies, all
-NULL); **not on `pettycashv3_data` or Supabase**. minty-onboarding-api's `requirements.txt` names
+the way back is its `_down.sql`. Applied 2026-11-17, each after a dry run, on local `postgres` (87
+companies), Supabase `development` (6) and Supabase `pettycashv3` (90) - all NULL; not on
+`pettycashv3_data`. minty-onboarding-api's `requirements.txt` names
 v0.11 (needs this tag pushed). Old code ignores the columns. Pinned by
 `test_the_sales_ticks_patch_matches_a_fresh_build_and_its_down_patch_reverses_it`.
 
