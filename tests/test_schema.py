@@ -1184,7 +1184,8 @@ def test_the_sales_account_codes_patch_matches_a_fresh_build_and_its_down_patch_
         company, account = uuid.uuid4(), uuid.uuid4()
         cur.execute("INSERT INTO entities (id, name) VALUES (%s, 'Shop')", (company,))
         cur.execute(
-            "INSERT INTO account_info (id, entity_id, type, name, account_type) VALUES (%s, %s, 'REVENUE', 'Credit Card Sales', 'sales')",
+            "INSERT INTO account_info (id, entity_id, type, name, account_type) "
+            "VALUES (%s, %s, 'REVENUE', 'Credit Card Sales', 'sales')",
             (account, company),
         )
         cur.execute(
