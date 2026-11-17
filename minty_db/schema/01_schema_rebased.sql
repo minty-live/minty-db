@@ -3103,6 +3103,10 @@ ALTER TABLE entities
   ADD COLUMN xero_publish_from DATE NULL,   -- the connect's choice: records dated earlier are never sent; NULL = all
   ADD COLUMN business_type   business_type NULL,   -- onboarding's two answers: the template set
   ADD COLUMN uses_sales_cash BOOLEAN NULL,                     --   Auto Fill and Settings suggest from
+  -- Accounting Setup's sales accounts (owner, 2026-11-17): Electronic Payment and Delivery ticked or not;
+  -- NULL = not chosen, the business type decides (Cash is uses_sales_cash)
+  ADD COLUMN sells_electronic BOOLEAN NULL,
+  ADD COLUMN sells_delivery   BOOLEAN NULL,
   -- an open matching of the company's accounts to Xero and why: a first connect, accounts added
   -- while disconnected, a new organisation, or changing the matches; cleared at Finish
   ADD COLUMN xero_matching xero_matching NULL;

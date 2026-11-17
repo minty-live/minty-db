@@ -351,6 +351,8 @@ class Entity(UpdatedAtMixin):
     xero_publish_from = models.DateField(null=True, blank=True)
     business_type = PgEnumField('business_type', max_length=7, null=True, blank=True)
     uses_sales_cash = models.BooleanField(null=True, blank=True)
+    sells_electronic = models.BooleanField(null=True, blank=True)
+    sells_delivery = models.BooleanField(null=True, blank=True)
     xero_matching = PgEnumField('xero_matching', max_length=12, null=True, blank=True)
 
     class Meta:

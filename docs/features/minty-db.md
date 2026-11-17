@@ -124,6 +124,16 @@ Supabase `pettycashv3` (52, 8; `entities`' definition saved first to Minty's git
 same day (accounts-api's duplicate-claimant test rewritten: two connected companies on one
 organisation can no longer exist). Pinned by `test_the_one_connected_org_patch_matches_a_fresh_build_and_holds_the_rule`.
 
+`2026-11-17_entity_sales_ticks.sql` (**v0.11**; owner-approved 2026-11-17): `entities.sells_electronic`
+and `entities.sells_delivery` (BOOLEAN NULL, beside `uses_sales_cash`) - onboarding's sales accounts
+screen (Figma 464:73 row 1): Sales - Electronic Payment and Sales - Delivery ticked or not, which
+decides the sales-method lists Petty Cash Settings asks for. Sales - Cash is `uses_sales_cash`. NULL =
+not chosen: minty-onboarding-api lets the business type pick. No backfill. Not re-runnable (guard);
+the way back is its `_down.sql`. Applied 2026-11-17 on local `postgres` only (87 companies, all
+NULL); **not on `pettycashv3_data` or Supabase**. minty-onboarding-api's `requirements.txt` names
+v0.11 (needs this tag pushed). Old code ignores the columns. Pinned by
+`test_the_sales_ticks_patch_matches_a_fresh_build_and_its_down_patch_reverses_it`.
+
 `2026-11-10_bill_contact_ids.sql` (a DATA repair, no schema change; owner: "fix it"): the v2->v3 load wrote Xero's ContactID into `bill.contact_id`, which names a `xero_contact_sync` row, so loaded bills opened with no supplier picked. Each such bill is linked by the Xero id in its company, else by the supplier's name (case and spaces ignored), else to a restored supplier row; a bill of a company that no longer exists is left (no row can be made for it). Re-runnable; the before/after SELECTs are the report. Applied 2026-11-10 on local `postgres` only (snapshot `backups/pg/postgres_prebillcontacts20261110.dump`): 1,548 of 1,550 linked, the 2 left belong to the companies deleted on 2026-11-09 (Minty's SWITCH 2c-0). Minty's load runs the same statements at the end of 03 (`gen.py` `BILL_CONTACTS`, check R14; rehearsed ALL GREEN). Pinned by `test_the_bill_contact_repair_links_each_bill_to_a_supplier_row`.
 
 `pettycashv3` (and local `postgres`) also hold `sessions`, Flask-Session's table. It is outside the schema file and has no model; it goes with Flask's session cutover.

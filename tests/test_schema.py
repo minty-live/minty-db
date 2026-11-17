@@ -1092,3 +1092,56 @@ def test_the_one_connected_org_patch_matches_a_fresh_build_and_holds_the_rule():
         conn.close()
     finally:
         pg.drop_database(name)
+
+
+SALES_TICKS_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-17_entity_sales_ticks.sql"
+SALES_TICKS_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-17_entity_sales_ticks_down.sql"
+
+
+@postgres_only
+def test_the_sales_ticks_patch_matches_a_fresh_build_and_its_down_patch_reverses_it():
+    """2026-11-17 (owner-approved): entities.sells_electronic and sells_delivery - Accounting
+    Setup's Electronic Payment and Delivery sales accounts ticked or not (NULL = not chosen, the
+    business type decides). Down then up lands on a fresh build; existing companies stay NULL; a
+    second run stops at its guard."""
+    import uuid
+
+    from minty_db.testing import pg
+
+    base = os.environ.get("MINTY_TEST_PG_DBNAME", "minty_test")
+    name = f"{base}_sales_ticks"
+    try:
+        built = pg.build(name)
+        conn = pg.connect(built.uri)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET search_path = pettycashv3")
+        url = built.uri + "?schema=pettycashv3"
+        assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
+        expected = _catalogue(conn)
+
+        down = _run_cli("patch", str(SALES_TICKS_DOWN), "--apply", database_url=url)
+        assert down.returncode == 0, down.stdout + down.stderr
+        cur.execute(
+            "SELECT count(*) FROM information_schema.columns WHERE table_name = 'entities' "
+            "AND column_name IN ('sells_electronic', 'sells_delivery')"
+        )
+        assert cur.fetchone()[0] == 0
+
+        company = uuid.uuid4()
+        cur.execute("INSERT INTO entities (id, name) VALUES (%s, 'Shop')", (company,))
+
+        done = _run_cli("patch", str(SALES_TICKS_PATCH), "--apply", database_url=url)
+        assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        got = _catalogue(conn)
+        diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
+        assert not diff, diff
+
+        cur.execute("SELECT sells_electronic, sells_delivery FROM entities WHERE id = %s", (company,))
+        assert cur.fetchone() == (None, None)
+
+        again = _run_cli("patch", str(SALES_TICKS_PATCH), "--apply", database_url=url)
+        assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
+        conn.close()
+    finally:
+        pg.drop_database(name)
