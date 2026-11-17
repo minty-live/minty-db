@@ -1470,6 +1470,10 @@ CREATE TABLE pettycash_test.entity_pettycash_settings (
   pettycash_account_id        UUID          NULL,
   bank_account_id             UUID          NULL,
   cash_sale_account_id        UUID          NULL,
+  -- the other two sales accounts' codes (owner, 2026-11-17): Sales - Electronic Payment and
+  -- Sales - Delivery, as cash_sale_account_id is Sales - Cash's; the day's sales invoice line each
+  electronic_sale_account_id  UUID          NULL,
+  delivery_sale_account_id    UUID          NULL,
   discrepancy_bank_account_id UUID          NULL,
   discrepancy_account_id      UUID          NULL,
   director_account_id         UUID          NULL,
@@ -1483,6 +1487,8 @@ CREATE TABLE pettycash_test.entity_pettycash_settings (
   CONSTRAINT fk_eps_pettycash_acct FOREIGN KEY (pettycash_account_id)       REFERENCES pettycash_test.account_info (id)      ON DELETE SET NULL,
   CONSTRAINT fk_eps_bank_acct      FOREIGN KEY (bank_account_id)            REFERENCES pettycash_test.account_info (id)      ON DELETE SET NULL,
   CONSTRAINT fk_eps_cashsale_acct  FOREIGN KEY (cash_sale_account_id)       REFERENCES pettycash_test.account_info (id)      ON DELETE SET NULL,
+  CONSTRAINT fk_eps_elecsale_acct  FOREIGN KEY (electronic_sale_account_id) REFERENCES pettycash_test.account_info (id)      ON DELETE SET NULL,
+  CONSTRAINT fk_eps_delsale_acct   FOREIGN KEY (delivery_sale_account_id)   REFERENCES pettycash_test.account_info (id)      ON DELETE SET NULL,
   CONSTRAINT fk_eps_disc_bank_acct FOREIGN KEY (discrepancy_bank_account_id) REFERENCES pettycash_test.account_info (id)     ON DELETE SET NULL,
   CONSTRAINT fk_eps_disc_acct      FOREIGN KEY (discrepancy_account_id)     REFERENCES pettycash_test.account_info (id)      ON DELETE SET NULL,
   CONSTRAINT fk_eps_director_acct  FOREIGN KEY (director_account_id)        REFERENCES pettycash_test.account_info (id)      ON DELETE SET NULL,

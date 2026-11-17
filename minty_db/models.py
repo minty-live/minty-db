@@ -522,6 +522,8 @@ class EntityPettycashSettings(UpdatedAtMixin):
     pettycash_account = models.ForeignKey('AccountInfo', models.SET_NULL, db_constraint=False, related_name='+', null=True, blank=True)
     bank_account = models.ForeignKey('AccountInfo', models.SET_NULL, db_constraint=False, related_name='+', null=True, blank=True)
     cash_sale_account = models.ForeignKey('AccountInfo', models.SET_NULL, db_constraint=False, related_name='+', null=True, blank=True)
+    electronic_sale_account = models.ForeignKey('AccountInfo', models.SET_NULL, db_constraint=False, related_name='+', null=True, blank=True)
+    delivery_sale_account = models.ForeignKey('AccountInfo', models.SET_NULL, db_constraint=False, related_name='+', null=True, blank=True)
     discrepancy_bank_account = models.ForeignKey('AccountInfo', models.SET_NULL, db_constraint=False, related_name='+', null=True, blank=True)
     discrepancy_account = models.ForeignKey('AccountInfo', models.SET_NULL, db_constraint=False, related_name='+', null=True, blank=True)
     director_account = models.ForeignKey('AccountInfo', models.SET_NULL, db_constraint=False, related_name='+', null=True, blank=True)

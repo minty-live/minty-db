@@ -1145,3 +1145,58 @@ def test_the_sales_ticks_patch_matches_a_fresh_build_and_its_down_patch_reverses
         conn.close()
     finally:
         pg.drop_database(name)
+
+
+CODES_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-17_sales_account_codes.sql"
+CODES_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-17_sales_account_codes_down.sql"
+
+
+@postgres_only
+def test_the_sales_account_codes_patch_matches_a_fresh_build_and_its_down_patch_reverses_it():
+    """2026-11-17 (owner): entity_pettycash_settings.electronic_sale_account_id and
+    delivery_sale_account_id - the other two sales accounts' codes, beside cash_sale_account_id. Down
+    then up lands on a fresh build; deleting the account sets the link NULL; a second run stops at
+    its guard."""
+    import uuid
+
+    from minty_db.testing import pg
+
+    base = os.environ.get("MINTY_TEST_PG_DBNAME", "minty_test")
+    name = f"{base}_sale_codes"
+    try:
+        built = pg.build(name)
+        conn = pg.connect(built.uri)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET search_path = pettycashv3")
+        url = built.uri + "?schema=pettycashv3"
+        assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
+        expected = _catalogue(conn)
+
+        down = _run_cli("patch", str(CODES_DOWN), "--apply", database_url=url)
+        assert down.returncode == 0, down.stdout + down.stderr
+        done = _run_cli("patch", str(CODES_PATCH), "--apply", database_url=url)
+        assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        got = _catalogue(conn)
+        diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
+        assert not diff, diff
+
+        company, account = uuid.uuid4(), uuid.uuid4()
+        cur.execute("INSERT INTO entities (id, name) VALUES (%s, 'Shop')", (company,))
+        cur.execute(
+            "INSERT INTO account_info (id, entity_id, type, name, account_type) VALUES (%s, %s, 'REVENUE', 'Credit Card Sales', 'sales')",
+            (account, company),
+        )
+        cur.execute(
+            "INSERT INTO entity_pettycash_settings (entity_id, electronic_sale_account_id) VALUES (%s, %s)",
+            (company, account),
+        )
+        cur.execute("DELETE FROM account_info WHERE id = %s", (account,))
+        cur.execute("SELECT electronic_sale_account_id FROM entity_pettycash_settings WHERE entity_id = %s", (company,))
+        assert cur.fetchone()[0] is None
+
+        again = _run_cli("patch", str(CODES_PATCH), "--apply", database_url=url)
+        assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
+        conn.close()
+    finally:
+        pg.drop_database(name)
