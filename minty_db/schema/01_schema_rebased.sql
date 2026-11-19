@@ -1692,6 +1692,11 @@ CREATE TABLE pettycash_test.report (
   -- databases. Report-level attachments, if they are ever wanted, belong in
   -- `attachment` the way expense ones now do. ERA 3 item 11.
   created_by                UUID                          NULL,
+  -- two people on one day's report (owner's decisions doc R2, 2026-11-19): every step save carries
+  -- the edit_version it was opened from, and a save from an older one is refused ("This step was
+  -- already saved by {name} at {time}"). saved_by_user_id = who saved last; the time is updated_at.
+  edit_version              INTEGER                       NOT NULL DEFAULT 0,
+  saved_by_user_id          UUID                          NULL,
   submitted_at              TIMESTAMPTZ                   NULL,
   published_at              TIMESTAMPTZ                   NULL,
   created_at                TIMESTAMPTZ                   NOT NULL DEFAULT now(),
@@ -1699,6 +1704,8 @@ CREATE TABLE pettycash_test.report (
   CONSTRAINT report_pkey PRIMARY KEY (id),
   CONSTRAINT fk_report_entity  FOREIGN KEY (entity_id)  REFERENCES pettycash_test.entities (id) ON DELETE RESTRICT,
   CONSTRAINT fk_report_creator FOREIGN KEY (created_by) REFERENCES pettycash_test.user (id) ON DELETE SET NULL,
+  CONSTRAINT fk_report_saved_by FOREIGN KEY (saved_by_user_id) REFERENCES pettycash_test.user (id) ON DELETE SET NULL,
+  CONSTRAINT ck_report_edit_version CHECK (edit_version >= 0),
   CONSTRAINT report_entity_date_key UNIQUE (entity_id, transaction_date)  -- 하루 1 리포트
 );
 COMMENT ON COLUMN pettycash_test.report.status IS
@@ -3284,6 +3291,48 @@ CREATE TABLE ai_read (
 );
 CREATE INDEX idx_ai_read_entity_created ON ai_read (entity_id, created_at);
 CREATE INDEX idx_ai_read_grant ON ai_read (grant_id);
+
+-- minty_merge (owner's decisions doc M1-M4, 2026-11-19): one row per merge of two of a company's
+-- accounts (account_info) or two of its contacts (xero_contact_sync). Every record on the merged
+-- one moves to the kept one, the merged one is archived with merged_into_id, and no new record is
+-- made; Xero is not touched. No undo in the app: minty_merge_record holds every record that moved,
+-- so a merge can be rebuilt by hand. reason: 'user' (Settings' Merge), 'xero_matching' (the
+-- combine at Xero matching) or 'merged_in_xero' (publish met a contact Xero merged into one the
+-- company already has). merged_id/kept_id name a row of account_info or xero_contact_sync by kind,
+-- so they carry no FK; a merged row is archived, never deleted.
+CREATE TABLE minty_merge (
+  id                UUID         NOT NULL DEFAULT gen_random_uuid(),
+  entity_id         UUID         NOT NULL,
+  kind              VARCHAR(10)  NOT NULL,
+  merged_id         UUID         NOT NULL,
+  kept_id           UUID         NOT NULL,
+  reason            VARCHAR(20)  NOT NULL,
+  merged_by_user_id UUID         NULL,
+  merged_at         TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  CONSTRAINT minty_merge_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_minty_merge_entity FOREIGN KEY (entity_id)         REFERENCES entities (id) ON DELETE CASCADE,
+  CONSTRAINT fk_minty_merge_user   FOREIGN KEY (merged_by_user_id) REFERENCES "user" (id)   ON DELETE SET NULL,
+  CONSTRAINT ck_minty_merge_kind   CHECK (kind IN ('account', 'contact')),
+  CONSTRAINT ck_minty_merge_reason CHECK (reason IN ('user', 'xero_matching', 'merged_in_xero')),
+  CONSTRAINT ck_minty_merge_self   CHECK (merged_id <> kept_id)
+);
+CREATE INDEX idx_minty_merge_entity ON minty_merge (entity_id, merged_at);
+CREATE INDEX idx_minty_merge_merged ON minty_merge (merged_id);
+
+-- minty_merge_record: each record a merge moved - the row (table_name, record_id) and the column
+-- that pointed at the merged account or contact (column_name), so its original can always be found.
+-- A row deleted later leaves its line here (record_id carries no FK).
+CREATE TABLE minty_merge_record (
+  id          UUID         NOT NULL DEFAULT gen_random_uuid(),
+  merge_id    UUID         NOT NULL,
+  table_name  VARCHAR(63)  NOT NULL,
+  column_name VARCHAR(63)  NOT NULL,
+  record_id   UUID         NOT NULL,
+  CONSTRAINT minty_merge_record_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_minty_merge_record_merge FOREIGN KEY (merge_id) REFERENCES minty_merge (id) ON DELETE CASCADE
+);
+CREATE INDEX idx_minty_merge_record_merge ON minty_merge_record (merge_id);
+
 
 -- report_expense and bill: how an AI-read amount in another currency was converted (owner,
 -- 2026-11-19; Frankfurter v1, the European Central Bank's reference rates). `amount` stays in the

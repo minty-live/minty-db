@@ -43,6 +43,10 @@ patches/2026-11-17_sales_account_codes.sql.
 v0.13 (2026-11-18): ai_policy (one row: the AI readers' models, the one-time default grant and extra
 caps), ai_grant (each company's AI allowances) and ai_read (one row per AI read, charged to a
 grant). A database already at 0001 gets them from patches/2026-11-18_ai_policy_and_reads.sql.
+
+v0.14 (2026-11-19): minty_merge and minty_merge_record (each merge of two accounts or two contacts,
+and every record it moved), and report.edit_version / saved_by_user_id (a step save from an older
+version is refused). A database already at 0001 gets them from patches/2026-11-19_merges_and_report_version.sql.
 Also v0.14: report_expense and bill gain original_currency, original_amount, exchange_rate,
 exchange_rate_date, exchange_rate_basis and exchange_rate_source (how an AI-read amount in another
 currency was converted), from patches/2026-11-19_exchange_rate.sql.
@@ -3656,6 +3660,78 @@ class Migration(migrations.Migration):
                     constraint=models.UniqueConstraint(
                         condition=models.Q(("source", "default")), fields=("entity",), name="uq_ai_grant_one_default"
                     ),
+                ),
+                migrations.AddField(
+                    model_name="report",
+                    name="edit_version",
+                    field=models.IntegerField(db_default=0),
+                ),
+                migrations.AddField(
+                    model_name="report",
+                    name="saved_by_user",
+                    field=models.ForeignKey(
+                        blank=True,
+                        db_constraint=False,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="+",
+                        to="minty_db.user",
+                    ),
+                ),
+                migrations.CreateModel(
+                    name="MintyMerge",
+                    fields=[
+                        ("id", models.UUIDField(default=uuid.uuid4, primary_key=True, serialize=False)),
+                        ("kind", models.CharField(max_length=10)),
+                        ("merged_id", models.UUIDField()),
+                        ("kept_id", models.UUIDField()),
+                        ("reason", models.CharField(max_length=20)),
+                        ("merged_at", models.DateTimeField(db_default=django.db.models.functions.datetime.Now())),
+                        (
+                            "entity",
+                            models.ForeignKey(
+                                db_constraint=False,
+                                on_delete=django.db.models.deletion.CASCADE,
+                                related_name="+",
+                                to="minty_db.entity",
+                            ),
+                        ),
+                        (
+                            "merged_by_user",
+                            models.ForeignKey(
+                                blank=True,
+                                db_constraint=False,
+                                null=True,
+                                on_delete=django.db.models.deletion.SET_NULL,
+                                related_name="+",
+                                to="minty_db.user",
+                            ),
+                        ),
+                    ],
+                    options={
+                        "db_table": "minty_merge",
+                    },
+                ),
+                migrations.CreateModel(
+                    name="MintyMergeRecord",
+                    fields=[
+                        ("id", models.UUIDField(default=uuid.uuid4, primary_key=True, serialize=False)),
+                        ("table_name", models.CharField(max_length=63)),
+                        ("column_name", models.CharField(max_length=63)),
+                        ("record_id", models.UUIDField()),
+                        (
+                            "merge",
+                            models.ForeignKey(
+                                db_constraint=False,
+                                on_delete=django.db.models.deletion.CASCADE,
+                                related_name="+",
+                                to="minty_db.mintymerge",
+                            ),
+                        ),
+                    ],
+                    options={
+                        "db_table": "minty_merge_record",
+                    },
                 ),
                 migrations.AddField(
                     model_name="reportexpense",

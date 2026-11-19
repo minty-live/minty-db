@@ -672,6 +672,31 @@ class Invitation(models.Model):
         db_table = 'invitation'
 
 
+class MintyMerge(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    entity = models.ForeignKey('Entity', models.CASCADE, db_constraint=False, related_name='+')
+    kind = models.CharField(max_length=10)
+    merged_id = models.UUIDField()
+    kept_id = models.UUIDField()
+    reason = models.CharField(max_length=20)
+    merged_by_user = models.ForeignKey('User', models.SET_NULL, db_constraint=False, related_name='+', null=True, blank=True)
+    merged_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        db_table = 'minty_merge'
+
+
+class MintyMergeRecord(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    merge = models.ForeignKey('MintyMerge', models.CASCADE, db_constraint=False, related_name='+')
+    table_name = models.CharField(max_length=63)
+    column_name = models.CharField(max_length=63)
+    record_id = models.UUIDField()
+
+    class Meta:
+        db_table = 'minty_merge_record'
+
+
 class PayerBillingGroup(UpdatedAtMixin):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     payer_user = models.ForeignKey('User', models.DO_NOTHING, db_constraint=False, related_name='billing_groups')
@@ -757,6 +782,8 @@ class Report(UpdatedAtMixin):
     xero_integrated = models.BooleanField(null=True, blank=True)
     cash_addition_type = models.CharField(max_length=20, null=True, blank=True)
     created_by = models.UUIDField(null=True, blank=True)
+    edit_version = models.IntegerField(db_default=0)
+    saved_by_user = models.ForeignKey('User', models.SET_NULL, db_constraint=False, related_name='+', null=True, blank=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
     published_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(db_default=Now())

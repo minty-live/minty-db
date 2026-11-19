@@ -1240,7 +1240,7 @@ def test_the_ai_patch_matches_a_fresh_build_seeds_the_policy_and_its_down_patch_
         assert not diff, diff
 
         cur.execute("SELECT primary_model, backup_model, default_grant, limit_rules FROM ai_policy")
-        assert cur.fetchall() == [("gemini-3.5-flash-lite", "gemini-3.8-flash", {"tokens": 20000}, [])]
+        assert cur.fetchall() == [("gemini-3.5-flash-lite", None, {"tokens": 20000}, [])]
         with pytest.raises(psycopg.errors.CheckViolation):
             cur.execute("INSERT INTO ai_policy (id, primary_model, limit_rules) VALUES (2, 'gemini-3.8-flash', '[]')")
         with pytest.raises(psycopg.errors.CheckViolation):
@@ -1271,6 +1271,91 @@ def test_the_ai_patch_matches_a_fresh_build_seeds_the_policy_and_its_down_patch_
         conn.close()
     finally:
         pg.drop_database(name)
+
+
+MERGE_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-19_merges_and_report_version.sql"
+MERGE_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-19_merges_and_report_version_down.sql"
+
+
+@postgres_only
+def test_the_merge_patch_matches_a_fresh_build_and_its_down_patch_reverses_it():
+    """2026-11-19 (owner's decisions doc M2, R2): minty_merge + minty_merge_record (each merge and
+    every record it moved) and report.edit_version / saved_by_user_id. Down then up lands on a fresh
+    build; a merge names a kind and a reason and never itself; its records go with it, and a
+    company's merges with the company; a report starts at version 0 and never goes below; a second
+    run stops at its guard."""
+    import uuid
+
+    import psycopg
+
+    from minty_db.testing import pg
+
+    base = os.environ.get("MINTY_TEST_PG_DBNAME", "minty_test")
+    name = f"{base}_merges"
+    try:
+        built = pg.build(name)
+        conn = pg.connect(built.uri)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET search_path = pettycashv3")
+        url = built.uri + "?schema=pettycashv3"
+        assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
+        expected = _catalogue(conn)
+
+        down = _run_cli("patch", str(MERGE_DOWN), "--apply", database_url=url)
+        assert down.returncode == 0, down.stdout + down.stderr
+        done = _run_cli("patch", str(MERGE_PATCH), "--apply", database_url=url)
+        assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        got = _catalogue(conn)
+        diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
+        assert not diff, diff
+
+        company, report, a, b = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        cur.execute("INSERT INTO entities (id, name) VALUES (%s, 'Shop')", (company,))
+        cur.execute(
+            "INSERT INTO report (id, entity_id, transaction_date) VALUES (%s, %s, '2026-11-19')", (report, company)
+        )
+        cur.execute("SELECT edit_version, saved_by_user_id FROM report WHERE id = %s", (report,))
+        assert cur.fetchone() == (0, None)
+        with pytest.raises(psycopg.errors.CheckViolation):
+            cur.execute("UPDATE report SET edit_version = -1 WHERE id = %s", (report,))
+
+        merge = uuid.uuid4()
+        cur.execute(
+            "INSERT INTO minty_merge (id, entity_id, kind, merged_id, kept_id, reason) "
+            "VALUES (%s, %s, 'account', %s, %s, 'user')",
+            (merge, company, a, b),
+        )
+        cur.execute(
+            "INSERT INTO minty_merge_record (merge_id, table_name, column_name, record_id) "
+            "VALUES (%s, 'report_expense', 'account_id', %s)",
+            (merge, uuid.uuid4()),
+        )
+        for bad in (("supplier", "user", a, b), ("contact", "manual", a, b), ("contact", "user", a, a)):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                cur.execute(
+                    "INSERT INTO minty_merge (entity_id, kind, reason, merged_id, kept_id) VALUES (%s, %s, %s, %s, %s)",
+                    (company, *bad),
+                )
+        cur.execute("DELETE FROM minty_merge WHERE id = %s", (merge,))
+        cur.execute("SELECT count(*) FROM minty_merge_record")
+        assert cur.fetchone()[0] == 0  # a merge's records go with it
+        cur.execute(
+            "INSERT INTO minty_merge (entity_id, kind, merged_id, kept_id, reason) "
+            "VALUES (%s, 'contact', %s, %s, 'merged_in_xero')",
+            (company, a, b),
+        )
+        cur.execute("DELETE FROM report WHERE entity_id = %s", (company,))
+        cur.execute("DELETE FROM entities WHERE id = %s", (company,))
+        cur.execute("SELECT count(*) FROM minty_merge")
+        assert cur.fetchone()[0] == 0  # a company's merges go with the company
+
+        again = _run_cli("patch", str(MERGE_PATCH), "--apply", database_url=url)
+        assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
+        conn.close()
+    finally:
+        pg.drop_database(name)
+
 
 FX_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-19_exchange_rate.sql"
 FX_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-19_exchange_rate_down.sql"
