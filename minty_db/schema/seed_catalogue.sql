@@ -88,6 +88,24 @@ VALUES
   (1, 30, 30, 15, '1,2,3,4,5,6,7,8,9,10,11,12,13', 'seed_catalogue.sql')
 ON CONFLICT (id) DO NOTHING;
 
+-- --------------------------------------------------------------------------
+-- The AI readers' policy row (owner, 2026-11-18). One row, ever: `ck_ai_policy_singleton`.
+--
+--   primary_model  the model every read tries first
+--   backup_model   tried once when the first errors, times out or is rate-limited (NULL = none)
+--   default_grant  the one-time AI allowance every company is given on its first read (ai_grant,
+--                  source 'default'): {"tokens": n, "reads": n, "days": n}, each key optional (at
+--                  least tokens or reads; days = it expires); NULL = only grants given by hand.
+--                  The preview: 20,000 tokens (about four to five receipts; owner, 2026-11-18).
+--   limit_rules    extra caps over every company, ALL applying: {"reads": n, "tokens": n,
+--                  "period_days": n}, each key optional (no period_days = ever, else a rolling
+--                  window). The preview: none.
+-- --------------------------------------------------------------------------
+INSERT INTO pettycashv3.ai_policy (id, primary_model, backup_model, default_grant, limit_rules, updated_by)
+VALUES
+  (1, 'gemini-3.5-flash-lite', 'gemini-3.8-flash', '{"tokens": 20000}', '[]', 'seed_catalogue.sql')
+ON CONFLICT (id) DO NOTHING;
+
 COMMIT;
 
 -- --------------------------------------------------------------------------
@@ -100,3 +118,6 @@ SELECT code, display_name, amount, currency, interval_months, is_active
 
 SELECT id, trial_days, paid_cancel_access_days, past_due_window_days, retry_offsets_days
   FROM pettycashv3.billing_policy;
+
+SELECT id, primary_model, backup_model, default_grant, limit_rules
+  FROM pettycashv3.ai_policy;

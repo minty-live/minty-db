@@ -101,6 +101,8 @@ PARTIAL_UNIQUE = {
         "(status <> 'disconnected'::entity_status)",
         '~models.Q(status="disconnected")',
     ),
+    # one default AI grant per company, ever (owner, 2026-11-18)
+    "uq_ai_grant_one_default": ("((source)::text = 'default'::text)", 'models.Q(source="default")'),
 }
 
 # Unique indexes only the database enforces, by name: the model carries no constraint for them.

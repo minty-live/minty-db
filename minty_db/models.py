@@ -115,6 +115,59 @@ class AccountTemplate(models.Model):
         db_table = 'account_template'
 
 
+class AiGrant(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    entity = models.ForeignKey('Entity', models.CASCADE, db_constraint=False, related_name='+')
+    tokens_total = models.IntegerField(null=True, blank=True)
+    reads_total = models.IntegerField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    source = models.CharField(max_length=10, db_default='manual')
+    granted_by = models.CharField(max_length=255, null=True, blank=True)
+    note = models.CharField(max_length=255, null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        db_table = 'ai_grant'
+        constraints = [
+            models.UniqueConstraint(fields=['entity'], condition=models.Q(source="default"), name='uq_ai_grant_one_default'),
+        ]
+
+
+class AiPolicy(UpdatedAtMixin):
+    id = models.IntegerField(primary_key=True)
+    primary_model = models.CharField(max_length=100)
+    backup_model = models.CharField(max_length=100, null=True, blank=True)
+    default_grant = models.JSONField(null=True, blank=True)
+    limit_rules = models.JSONField()
+    updated_by = models.CharField(max_length=255, null=True, blank=True)
+
+    class Meta:
+        db_table = 'ai_policy'
+
+
+class AiRead(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    entity = models.ForeignKey('Entity', models.CASCADE, db_constraint=False, related_name='+')
+    grant = models.ForeignKey('AiGrant', models.SET_NULL, db_constraint=False, related_name='+', null=True, blank=True)
+    user = models.ForeignKey('User', models.SET_NULL, db_constraint=False, related_name='+', null=True, blank=True)
+    module = models.CharField(max_length=20)
+    status = models.CharField(max_length=10, db_default='pending')
+    reason = models.CharField(max_length=40, null=True, blank=True)
+    model_answered = models.CharField(max_length=100, null=True, blank=True)
+    attempts = models.CharField(max_length=400, null=True, blank=True)
+    tokens_in = models.IntegerField(db_default=0)
+    tokens_out = models.IntegerField(db_default=0)
+    tokens_thought = models.IntegerField(db_default=0)
+    tokens_cached = models.IntegerField(db_default=0)
+    estimated_cost = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
+    latency_ms = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(db_default=Now())
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'ai_read'
+
+
 class Attachment(UpdatedAtMixin):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4)
     original_name = models.CharField(max_length=255)

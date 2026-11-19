@@ -1201,3 +1201,73 @@ def test_the_sales_account_codes_patch_matches_a_fresh_build_and_its_down_patch_
         conn.close()
     finally:
         pg.drop_database(name)
+
+
+AI_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-18_ai_policy_and_reads.sql"
+AI_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-18_ai_policy_and_reads_down.sql"
+
+
+@postgres_only
+def test_the_ai_patch_matches_a_fresh_build_seeds_the_policy_and_its_down_patch_reverses_it():
+    """2026-11-18 (owner): ai_policy (one row: models, the one-time default grant, extra caps),
+    ai_grant (a company's allowances) and ai_read (one row per read, charged to a grant). Down then
+    up lands on a fresh build; the patch writes the policy row; one row only; one default grant per
+    company; a company's grants and reads go with it; a second run stops at its guard."""
+    import uuid
+
+    import psycopg
+
+    from minty_db.testing import pg
+
+    base = os.environ.get("MINTY_TEST_PG_DBNAME", "minty_test")
+    name = f"{base}_ai_policy"
+    try:
+        built = pg.build(name)
+        conn = pg.connect(built.uri)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET search_path = pettycashv3")
+        url = built.uri + "?schema=pettycashv3"
+        assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
+        expected = _catalogue(conn)
+
+        down = _run_cli("patch", str(AI_DOWN), "--apply", database_url=url)
+        assert down.returncode == 0, down.stdout + down.stderr
+        done = _run_cli("patch", str(AI_PATCH), "--apply", database_url=url)
+        assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        got = _catalogue(conn)
+        diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
+        assert not diff, diff
+
+        cur.execute("SELECT primary_model, backup_model, default_grant, limit_rules FROM ai_policy")
+        assert cur.fetchall() == [("gemini-3.5-flash-lite", "gemini-3.8-flash", {"tokens": 20000}, [])]
+        with pytest.raises(psycopg.errors.CheckViolation):
+            cur.execute("INSERT INTO ai_policy (id, primary_model, limit_rules) VALUES (2, 'gemini-3.8-flash', '[]')")
+        with pytest.raises(psycopg.errors.CheckViolation):
+            cur.execute("UPDATE ai_policy SET limit_rules = '{\"reads\": 10}'")
+
+        company, grant = uuid.uuid4(), uuid.uuid4()
+        cur.execute("INSERT INTO entities (id, name) VALUES (%s, 'Shop')", (company,))
+        cur.execute(
+            "INSERT INTO ai_grant (id, entity_id, tokens_total, source) VALUES (%s, %s, 10000, 'default')",
+            (grant, company),
+        )
+        with pytest.raises(psycopg.errors.UniqueViolation):  # one default grant, ever
+            cur.execute("INSERT INTO ai_grant (entity_id, reads_total, source) VALUES (%s, 5, 'default')", (company,))
+        with pytest.raises(psycopg.errors.CheckViolation):  # a grant limits something
+            cur.execute("INSERT INTO ai_grant (entity_id) VALUES (%s)", (company,))
+        cur.execute("INSERT INTO ai_grant (entity_id, reads_total) VALUES (%s, 5)", (company,))  # a top-up
+        cur.execute("INSERT INTO ai_read (entity_id, grant_id, module) VALUES (%s, %s, 'petty_cash')", (company, grant))
+        cur.execute("SELECT status, tokens_in FROM ai_read WHERE entity_id = %s", (company,))
+        assert cur.fetchall() == [("pending", 0)]
+        with pytest.raises(psycopg.errors.CheckViolation):
+            cur.execute("INSERT INTO ai_read (entity_id, module) VALUES (%s, 'sales')", (company,))
+        cur.execute("DELETE FROM entities WHERE id = %s", (company,))
+        cur.execute("SELECT (SELECT count(*) FROM ai_read) + (SELECT count(*) FROM ai_grant)")
+        assert cur.fetchone()[0] == 0
+
+        again = _run_cli("patch", str(AI_PATCH), "--apply", database_url=url)
+        assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
+        conn.close()
+    finally:
+        pg.drop_database(name)
