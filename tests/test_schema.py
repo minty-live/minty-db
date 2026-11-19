@@ -1271,3 +1271,73 @@ def test_the_ai_patch_matches_a_fresh_build_seeds_the_policy_and_its_down_patch_
         conn.close()
     finally:
         pg.drop_database(name)
+
+FX_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-19_exchange_rate.sql"
+FX_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-19_exchange_rate_down.sql"
+
+
+def test_the_exchange_rate_patch_matches_a_fresh_build_and_holds_all_six_or_none():
+    """2026-11-19 (owner): report_expense and bill keep how an AI-read amount in another currency was
+    converted - six columns, all set or all empty, a rate above 0 and a basis of 'receipt' or
+    'report_date'. Down then up lands on a fresh build; a second run stops at its guard."""
+    import uuid
+
+    import psycopg
+
+    from minty_db.testing import pg
+
+    base = os.environ.get("MINTY_TEST_PG_DBNAME", "minty_test")
+    name = f"{base}_fx"
+    try:
+        built = pg.build(name)
+        conn = pg.connect(built.uri)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET search_path = pettycashv3")
+        url = built.uri + "?schema=pettycashv3"
+        assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
+        expected = _catalogue(conn)
+
+        down = _run_cli("patch", str(FX_DOWN), "--apply", database_url=url)
+        assert down.returncode == 0, down.stdout + down.stderr
+        done = _run_cli("patch", str(FX_PATCH), "--apply", database_url=url)
+        assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        got = _catalogue(conn)
+        diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
+        assert not diff, diff
+
+        company, report, bill = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        cur.execute("INSERT INTO entities (id, name) VALUES (%s, 'Shop')", (company,))
+        cur.execute(
+            "INSERT INTO report (id, entity_id, transaction_date) VALUES (%s, %s, '2026-11-19')", (report, company)
+        )
+        six = "original_currency, original_amount, exchange_rate, exchange_rate_date, exchange_rate_basis, " \
+              "exchange_rate_source"
+        good = ("USD", "12.34", "7.8467", "2026-11-13", "receipt", "Frankfurter")
+        cur.execute(
+            f"INSERT INTO report_expense (report_id, amount, {six}) VALUES (%s, 96.83, %s, %s, %s, %s, %s, %s)",
+            (report, *good),
+        )
+        cur.execute("INSERT INTO report_expense (report_id, amount) VALUES (%s, 10)", (report,))  # none
+        cur.execute(
+            f"INSERT INTO bill (id, entity_id, amount, {six}) VALUES (%s, %s, 96.83, %s, %s, %s, %s, %s, %s)",
+            (bill, company, *good[:4], "report_date", good[5]),
+        )
+        for bad in (
+            ("USD", "12.34", None, "2026-11-13", "receipt", "Frankfurter"),  # not all six
+            ("USD", "12.34", "0", "2026-11-13", "receipt", "Frankfurter"),  # no rate
+            ("USD", "12.34", "7.8", "2026-11-13", "invoice", "Frankfurter"),  # unknown basis
+            ("USD", "12.34", "7.8", "2026-11-13", None, "Frankfurter"),  # no basis
+        ):
+            for table, extra in (("report_expense", ("report_id", report)), ("bill", ("entity_id", company))):
+                with pytest.raises(psycopg.errors.CheckViolation):
+                    cur.execute(
+                        f"INSERT INTO {table} ({extra[0]}, amount, {six}) VALUES (%s, 1, %s, %s, %s, %s, %s, %s)",
+                        (extra[1], *bad),
+                    )
+
+        again = _run_cli("patch", str(FX_PATCH), "--apply", database_url=url)
+        assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
+        conn.close()
+    finally:
+        pg.drop_database(name)

@@ -3285,4 +3285,39 @@ CREATE TABLE ai_read (
 CREATE INDEX idx_ai_read_entity_created ON ai_read (entity_id, created_at);
 CREATE INDEX idx_ai_read_grant ON ai_read (grant_id);
 
+-- report_expense and bill: how an AI-read amount in another currency was converted (owner,
+-- 2026-11-19; Frankfurter v1, the European Central Bank's reference rates). `amount` stays in the
+-- company currency; these say where it came from: the document's currency and amount, the rate and
+-- the day it is for (the previous business day on a weekend or holiday), whether that day was the
+-- document's ('receipt') or the report's ('report_date'), and the source. All six or none: they are
+-- kept only while the amount is still the converted one.
+ALTER TABLE report_expense
+  ADD COLUMN original_currency    CHAR(3)       NULL,
+  ADD COLUMN original_amount      NUMERIC(14,2) NULL,
+  ADD COLUMN exchange_rate        NUMERIC(20,10) NULL,
+  ADD COLUMN exchange_rate_date   DATE          NULL,
+  ADD COLUMN exchange_rate_basis  VARCHAR(16)   NULL,
+  ADD COLUMN exchange_rate_source VARCHAR(32)   NULL,
+  ADD CONSTRAINT ck_report_expense_exchange CHECK (
+    (original_currency IS NULL AND original_amount IS NULL AND exchange_rate IS NULL
+       AND exchange_rate_date IS NULL AND exchange_rate_basis IS NULL AND exchange_rate_source IS NULL)
+    OR (original_currency IS NOT NULL AND original_amount IS NOT NULL AND exchange_rate IS NOT NULL AND exchange_rate > 0
+       AND exchange_rate_date IS NOT NULL AND exchange_rate_basis IS NOT NULL
+       AND exchange_rate_basis IN ('receipt', 'report_date')
+       AND exchange_rate_source IS NOT NULL));
+ALTER TABLE bill
+  ADD COLUMN original_currency    CHAR(3)       NULL,
+  ADD COLUMN original_amount      NUMERIC(14,2) NULL,
+  ADD COLUMN exchange_rate        NUMERIC(20,10) NULL,
+  ADD COLUMN exchange_rate_date   DATE          NULL,
+  ADD COLUMN exchange_rate_basis  VARCHAR(16)   NULL,
+  ADD COLUMN exchange_rate_source VARCHAR(32)   NULL,
+  ADD CONSTRAINT ck_bill_exchange CHECK (
+    (original_currency IS NULL AND original_amount IS NULL AND exchange_rate IS NULL
+       AND exchange_rate_date IS NULL AND exchange_rate_basis IS NULL AND exchange_rate_source IS NULL)
+    OR (original_currency IS NOT NULL AND original_amount IS NOT NULL AND exchange_rate IS NOT NULL AND exchange_rate > 0
+       AND exchange_rate_date IS NOT NULL AND exchange_rate_basis IS NOT NULL
+       AND exchange_rate_basis IN ('receipt', 'report_date')
+       AND exchange_rate_source IS NOT NULL));
+
 RESET search_path;

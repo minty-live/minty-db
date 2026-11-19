@@ -206,6 +206,12 @@ class Bill(UpdatedAtMixin):
     created_by = models.UUIDField(null=True, blank=True)
     created_at = models.DateTimeField(db_default=Now())
     published_contact_name = models.CharField(max_length=255, null=True, blank=True)
+    original_currency = CharNField(max_length=3, null=True, blank=True)
+    original_amount = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    exchange_rate = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
+    exchange_rate_date = models.DateField(null=True, blank=True)
+    exchange_rate_basis = models.CharField(max_length=16, null=True, blank=True)
+    exchange_rate_source = models.CharField(max_length=32, null=True, blank=True)
 
     class Meta:
         db_table = 'bill'
@@ -802,6 +808,12 @@ class ReportExpense(models.Model):
     published_account_code = models.CharField(max_length=10, null=True, blank=True)
     published_account_name = models.CharField(max_length=150, null=True, blank=True)
     published_contact_name = models.CharField(max_length=255, null=True, blank=True)
+    original_currency = CharNField(max_length=3, null=True, blank=True)
+    original_amount = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    exchange_rate = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
+    exchange_rate_date = models.DateField(null=True, blank=True)
+    exchange_rate_basis = models.CharField(max_length=16, null=True, blank=True)
+    exchange_rate_source = models.CharField(max_length=32, null=True, blank=True)
 
     class Meta:
         db_table = 'report_expense'
