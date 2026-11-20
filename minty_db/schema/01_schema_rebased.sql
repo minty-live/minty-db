@@ -3369,4 +3369,26 @@ ALTER TABLE bill
        AND exchange_rate_basis IN ('receipt', 'report_date')
        AND exchange_rate_source IS NOT NULL));
 
+-- ai_policy gains the readers' settings (owner, 2026-11-20): what was each service's environment
+-- (EXPENSE_AI_* / BILL_AI_*) is now the policy row, so it changes with an UPDATE for every service
+-- at once. receipt_reader_on / invoice_reader_on switch Petty Cash's receipt reader and Payment
+-- Request's invoice reader (a reader ships dark: off unless set); timeout_s is each model call's
+-- limit, max_output_tokens the reply's budget (thinking included), thinking_level how hard the model
+-- thinks, max_file_mb the largest document read, location the Vertex AI region the model runs in
+-- (asia-southeast1, Singapore - it decides which models exist, so it sits beside them). The Google
+-- Cloud project and its credentials stay in each service's environment.
+ALTER TABLE ai_policy
+  ADD COLUMN receipt_reader_on BOOLEAN     NOT NULL DEFAULT false,
+  ADD COLUMN invoice_reader_on BOOLEAN     NOT NULL DEFAULT false,
+  ADD COLUMN timeout_s         INTEGER     NOT NULL DEFAULT 25,
+  ADD COLUMN max_output_tokens INTEGER     NOT NULL DEFAULT 4096,
+  ADD COLUMN thinking_level    VARCHAR(10) NOT NULL DEFAULT 'low',
+  ADD COLUMN max_file_mb       INTEGER     NOT NULL DEFAULT 10,
+  ADD COLUMN location          VARCHAR(40) NOT NULL DEFAULT 'asia-southeast1',
+  ADD CONSTRAINT ck_ai_policy_timeout     CHECK (timeout_s BETWEEN 5 AND 120),
+  ADD CONSTRAINT ck_ai_policy_output      CHECK (max_output_tokens BETWEEN 256 AND 65536),
+  ADD CONSTRAINT ck_ai_policy_thinking    CHECK (thinking_level IN ('minimal', 'low', 'medium', 'high')),
+  ADD CONSTRAINT ck_ai_policy_file_size   CHECK (max_file_mb BETWEEN 1 AND 20),
+  ADD CONSTRAINT ck_ai_policy_location    CHECK (location ~ '^[a-z][a-z0-9-]*[a-z0-9]$');
+
 RESET search_path;

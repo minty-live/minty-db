@@ -1235,6 +1235,9 @@ def test_the_ai_patch_matches_a_fresh_build_seeds_the_policy_and_its_down_patch_
         assert down.returncode == 0, down.stdout + down.stderr
         done = _run_cli("patch", str(AI_PATCH), "--apply", database_url=url)
         assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        # the down patch drops ai_policy whole; its 2026-11-20 columns come back with their own patch
+        settings = _run_cli("patch", str(AI_SETTINGS_PATCH), "--apply", database_url=url)
+        assert settings.returncode == 0, settings.stdout + settings.stderr
         got = _catalogue(conn)
         diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
         assert not diff, diff
@@ -1273,6 +1276,8 @@ def test_the_ai_patch_matches_a_fresh_build_seeds_the_policy_and_its_down_patch_
         pg.drop_database(name)
 
 
+AI_SETTINGS_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-20_ai_reader_settings.sql"
+AI_SETTINGS_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-20_ai_reader_settings_down.sql"
 MERGE_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-19_merges_and_report_version.sql"
 MERGE_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-19_merges_and_report_version_down.sql"
 
@@ -1396,8 +1401,10 @@ def test_the_exchange_rate_patch_matches_a_fresh_build_and_holds_all_six_or_none
         cur.execute(
             "INSERT INTO report (id, entity_id, transaction_date) VALUES (%s, %s, '2026-11-19')", (report, company)
         )
-        six = "original_currency, original_amount, exchange_rate, exchange_rate_date, exchange_rate_basis, " \
-              "exchange_rate_source"
+        six = (
+            "original_currency, original_amount, exchange_rate, exchange_rate_date, exchange_rate_basis, "
+            "exchange_rate_source"
+        )
         good = ("USD", "12.34", "7.8467", "2026-11-13", "receipt", "Frankfurter")
         cur.execute(
             f"INSERT INTO report_expense (report_id, amount, {six}) VALUES (%s, 96.83, %s, %s, %s, %s, %s, %s)",
@@ -1422,6 +1429,71 @@ def test_the_exchange_rate_patch_matches_a_fresh_build_and_holds_all_six_or_none
                     )
 
         again = _run_cli("patch", str(FX_PATCH), "--apply", database_url=url)
+        assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
+        conn.close()
+    finally:
+        pg.drop_database(name)
+
+
+@postgres_only
+def test_the_ai_settings_patch_matches_a_fresh_build_keeps_the_readers_on_and_holds_its_ranges():
+    """2026-11-20 (owner): ai_policy holds the readers' settings that were each service's environment -
+    the two readers' switches, the timeout, the token budget, the thinking level and the largest
+    document. Down then up lands on a fresh build; the patch keeps both readers on with the values the
+    services ran with; out-of-range values are refused; a second run stops at its guard."""
+    import psycopg
+
+    from minty_db.testing import pg
+
+    base = os.environ.get("MINTY_TEST_PG_DBNAME", "minty_test")
+    name = f"{base}_ai_settings"
+    try:
+        built = pg.build(name)
+        conn = pg.connect(built.uri)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET search_path = pettycashv3")
+        url = built.uri + "?schema=pettycashv3"
+        assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
+        expected = _catalogue(conn)
+        cur.execute(
+            "INSERT INTO ai_policy (id, primary_model, default_grant, limit_rules) "
+            "VALUES (1, 'gemini-3.5-flash', '{\"tokens\": 20000}', '[]')"
+        )
+
+        down = _run_cli("patch", str(AI_SETTINGS_DOWN), "--apply", database_url=url)
+        assert down.returncode == 0, down.stdout + down.stderr
+        done = _run_cli("patch", str(AI_SETTINGS_PATCH), "--apply", database_url=url)
+        assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        got = _catalogue(conn)
+        diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
+        assert not diff, diff
+
+        cur.execute(
+            "SELECT receipt_reader_on, invoice_reader_on, timeout_s, max_output_tokens, thinking_level, "
+            "max_file_mb, location FROM ai_policy"
+        )
+        assert cur.fetchall() == [(True, True, 25, 4096, "low", 10, "asia-southeast1")]
+        for bad in (
+            "timeout_s = 4",
+            "timeout_s = 121",
+            "max_output_tokens = 255",
+            "max_output_tokens = 65537",
+            "thinking_level = 'extreme'",
+            "max_file_mb = 0",
+            "max_file_mb = 21",
+            "location = ''",
+            "location = 'Asia Southeast1'",
+            "location = 'asia-southeast1;drop'",
+        ):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                cur.execute(f"UPDATE ai_policy SET {bad}")
+        cur.execute(
+            "UPDATE ai_policy SET timeout_s = 120, max_output_tokens = 256, thinking_level = 'minimal', "
+            "location = 'global'"
+        )
+
+        again = _run_cli("patch", str(AI_SETTINGS_PATCH), "--apply", database_url=url)
         assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
         conn.close()
     finally:

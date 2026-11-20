@@ -100,10 +100,20 @@ ON CONFLICT (id) DO NOTHING;
 --   limit_rules    extra caps over every company, ALL applying: {"reads": n, "tokens": n,
 --                  "period_days": n}, each key optional (no period_days = ever, else a rolling
 --                  window). The preview: none.
+--   receipt_reader_on, invoice_reader_on   Petty Cash's receipt reader and Payment Request's
+--                  invoice reader switched on (owner, 2026-11-20; a reader ships dark otherwise)
+--   timeout_s, max_output_tokens, thinking_level, max_file_mb   each model call's limit, the
+--                  reply's token budget (thinking included), how hard it thinks, the largest
+--                  document read.
+--   location       the Vertex AI region (owner, 2026-11-20): asia-southeast1, Singapore, where
+--                  gemini-3.5-flash is served - the region decides which models exist.
 -- --------------------------------------------------------------------------
-INSERT INTO pettycashv3.ai_policy (id, primary_model, backup_model, default_grant, limit_rules, updated_by)
+INSERT INTO pettycashv3.ai_policy (id, primary_model, backup_model, default_grant, limit_rules,
+                                  receipt_reader_on, invoice_reader_on, timeout_s, max_output_tokens,
+                                  thinking_level, max_file_mb, location, updated_by)
 VALUES
-  (1, 'gemini-3.5-flash-lite', NULL, '{"tokens": 20000}', '[]', 'seed_catalogue.sql')
+  (1, 'gemini-3.5-flash', NULL, '{"tokens": 20000}', '[]', true, true, 25, 4096, 'low', 10,
+   'asia-southeast1', 'seed_catalogue.sql')
 ON CONFLICT (id) DO NOTHING;
 
 COMMIT;

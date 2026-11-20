@@ -140,6 +140,13 @@ class AiPolicy(UpdatedAtMixin):
     default_grant = models.JSONField(null=True, blank=True)
     limit_rules = models.JSONField()
     updated_by = models.CharField(max_length=255, null=True, blank=True)
+    receipt_reader_on = models.BooleanField(db_default=False)
+    invoice_reader_on = models.BooleanField(db_default=False)
+    timeout_s = models.IntegerField(db_default=25)
+    max_output_tokens = models.IntegerField(db_default=4096)
+    thinking_level = models.CharField(max_length=10, db_default='low')
+    max_file_mb = models.IntegerField(db_default=10)
+    location = models.CharField(max_length=40, db_default='asia-southeast1')
 
     class Meta:
         db_table = 'ai_policy'
