@@ -125,6 +125,8 @@ class AiGrant(models.Model):
     granted_by = models.CharField(max_length=255, null=True, blank=True)
     note = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(db_default=Now())
+    ended_at = models.DateTimeField(null=True, blank=True)
+    ended_by = models.CharField(max_length=255, null=True, blank=True)
 
     class Meta:
         db_table = 'ai_grant'

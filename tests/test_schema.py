@@ -1235,9 +1235,12 @@ def test_the_ai_patch_matches_a_fresh_build_seeds_the_policy_and_its_down_patch_
         assert down.returncode == 0, down.stdout + down.stderr
         done = _run_cli("patch", str(AI_PATCH), "--apply", database_url=url)
         assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
-        # the down patch drops ai_policy whole; its 2026-11-20 columns come back with their own patch
+        # the down patch drops ai_policy and ai_grant whole; their 2026-11-20 columns come back with
+        # their own patches
         settings = _run_cli("patch", str(AI_SETTINGS_PATCH), "--apply", database_url=url)
         assert settings.returncode == 0, settings.stdout + settings.stderr
+        ended = _run_cli("patch", str(ENDED_PATCH), "--apply", database_url=url)
+        assert ended.returncode == 0, ended.stdout + ended.stderr
         got = _catalogue(conn)
         diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
         assert not diff, diff
@@ -1495,6 +1498,60 @@ def test_the_ai_settings_patch_matches_a_fresh_build_keeps_the_readers_on_and_ho
         )
 
         again = _run_cli("patch", str(AI_SETTINGS_PATCH), "--apply", database_url=url)
+        assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
+        conn.close()
+    finally:
+        pg.drop_database(name)
+
+
+ENDED_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-20_ai_grant_ended.sql"
+ENDED_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-20_ai_grant_ended_down.sql"
+
+
+@postgres_only
+def test_the_grant_ended_patch_matches_a_fresh_build_and_holds_both_or_neither():
+    """2026-11-20 (owner): a superuser can end a company's AI grant, and ai_grant keeps who and when -
+    ended_at and ended_by, both set or both empty. Down then up lands on a fresh build; a second run
+    stops at its guard."""
+    import uuid
+
+    import psycopg
+
+    from minty_db.testing import pg
+
+    base = os.environ.get("MINTY_TEST_PG_DBNAME", "minty_test")
+    name = f"{base}_grant_ended"
+    try:
+        built = pg.build(name)
+        conn = pg.connect(built.uri)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET search_path = pettycashv3")
+        url = built.uri + "?schema=pettycashv3"
+        assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
+        expected = _catalogue(conn)
+
+        down = _run_cli("patch", str(ENDED_DOWN), "--apply", database_url=url)
+        assert down.returncode == 0, down.stdout + down.stderr
+        done = _run_cli("patch", str(ENDED_PATCH), "--apply", database_url=url)
+        assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        got = _catalogue(conn)
+        diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
+        assert not diff, diff
+
+        company = uuid.uuid4()
+        cur.execute("INSERT INTO entities (id, name) VALUES (%s, 'Shop')", (company,))
+        cur.execute("INSERT INTO ai_grant (entity_id, tokens_total) VALUES (%s, 20000)", (company,))  # neither
+        cur.execute(
+            "INSERT INTO ai_grant (entity_id, tokens_total, ended_at, ended_by) "
+            "VALUES (%s, 5000, now(), 'boss@test.com')",
+            (company,),
+        )  # both
+        for bad in ("ended_at, ended_by) VALUES (%s, 1, now(), NULL)", "ended_at, ended_by) VALUES (%s, 1, NULL, 'x')"):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                cur.execute("INSERT INTO ai_grant (entity_id, tokens_total, " + bad, (company,))
+
+        again = _run_cli("patch", str(ENDED_PATCH), "--apply", database_url=url)
         assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
         conn.close()
     finally:

@@ -3391,4 +3391,13 @@ ALTER TABLE ai_policy
   ADD CONSTRAINT ck_ai_policy_file_size   CHECK (max_file_mb BETWEEN 1 AND 20),
   ADD CONSTRAINT ck_ai_policy_location    CHECK (location ~ '^[a-z][a-z0-9-]*[a-z0-9]$');
 
+-- ai_grant: a superuser can end a company's grant early (owner, 2026-11-20). Ending sets expires_at
+-- to now, so the allowance stops counting it; these two say when and who (the superuser's email),
+-- for the AI allowances dialog. Both set or both empty.
+ALTER TABLE ai_grant
+  ADD COLUMN ended_at TIMESTAMPTZ  NULL,
+  ADD COLUMN ended_by VARCHAR(255) NULL,
+  ADD CONSTRAINT ck_ai_grant_ended CHECK (
+    (ended_at IS NULL AND ended_by IS NULL) OR (ended_at IS NOT NULL AND ended_by IS NOT NULL));
+
 RESET search_path;
