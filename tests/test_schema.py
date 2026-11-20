@@ -1366,6 +1366,7 @@ FX_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-19_exchange_rate.
 FX_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-19_exchange_rate_down.sql"
 
 
+@postgres_only
 def test_the_exchange_rate_patch_matches_a_fresh_build_and_holds_all_six_or_none():
     """2026-11-19 (owner): report_expense and bill keep how an AI-read amount in another currency was
     converted - six columns, all set or all empty, a rate above 0 and a basis of 'receipt' or
