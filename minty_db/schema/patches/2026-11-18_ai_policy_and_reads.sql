@@ -99,7 +99,7 @@ CREATE INDEX idx_ai_read_entity_created ON ai_read (entity_id, created_at);
 CREATE INDEX idx_ai_read_grant ON ai_read (grant_id);
 
 INSERT INTO ai_policy (id, primary_model, backup_model, default_grant, limit_rules, updated_by)
-VALUES (1, 'gemini-3.5-flash-lite', 'gemini-3.8-flash', '{"tokens": 20000}', '[]',
+VALUES (1, 'gemini-3.5-flash-lite', NULL, '{"tokens": 20000}', '[]',
         '2026-11-18_ai_policy_and_reads.sql');
 
 SELECT id, primary_model, backup_model, default_grant, limit_rules FROM ai_policy;

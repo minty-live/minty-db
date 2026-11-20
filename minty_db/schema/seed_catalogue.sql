@@ -103,7 +103,7 @@ ON CONFLICT (id) DO NOTHING;
 -- --------------------------------------------------------------------------
 INSERT INTO pettycashv3.ai_policy (id, primary_model, backup_model, default_grant, limit_rules, updated_by)
 VALUES
-  (1, 'gemini-3.5-flash-lite', 'gemini-3.8-flash', '{"tokens": 20000}', '[]', 'seed_catalogue.sql')
+  (1, 'gemini-3.5-flash-lite', NULL, '{"tokens": 20000}', '[]', 'seed_catalogue.sql')
 ON CONFLICT (id) DO NOTHING;
 
 COMMIT;
