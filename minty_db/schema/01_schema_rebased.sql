@@ -2848,7 +2848,7 @@ RETURN (CASE upper(btrim(t))
 CREATE FUNCTION account_code_from_xero(code TEXT, t TEXT) RETURNS VARCHAR(10)
 LANGUAGE sql IMMUTABLE
 RETURN CASE WHEN NULLIF(btrim(code), '') IS NULL THEN NULL
-            WHEN upper(btrim(t)) = 'BANK' AND length(btrim(code)) > 10 THEN NULL   -- the name, not a code
+            WHEN length(btrim(code)) > 10 THEN NULL   -- a name, not a code (any type; 2026-11-23)
             ELSE btrim(code) END;
 
 CREATE FUNCTION record_status_from_xero(s TEXT) RETURNS record_status
@@ -3374,9 +3374,9 @@ ALTER TABLE bill
 -- at once. receipt_reader_on / invoice_reader_on switch Petty Cash's receipt reader and Payment
 -- Request's invoice reader (a reader ships dark: off unless set); timeout_s is each model call's
 -- limit, max_output_tokens the reply's budget (thinking included), thinking_level how hard the model
--- thinks, max_file_mb the largest document read, location the Vertex AI region the model runs in
--- (asia-southeast1, Singapore - it decides which models exist, so it sits beside them). The Google
--- Cloud project and its credentials stay in each service's environment.
+-- thinks, max_file_mb the largest document read. The Google Cloud project and its credentials stay in
+-- each service's environment; every read runs on Vertex AI's global endpoint (owner, 2026-11-23: the
+-- region column it had from 2026-11-20 to 2026-11-23 is gone).
 ALTER TABLE ai_policy
   ADD COLUMN receipt_reader_on BOOLEAN     NOT NULL DEFAULT false,
   ADD COLUMN invoice_reader_on BOOLEAN     NOT NULL DEFAULT false,
@@ -3384,12 +3384,10 @@ ALTER TABLE ai_policy
   ADD COLUMN max_output_tokens INTEGER     NOT NULL DEFAULT 4096,
   ADD COLUMN thinking_level    VARCHAR(10) NOT NULL DEFAULT 'low',
   ADD COLUMN max_file_mb       INTEGER     NOT NULL DEFAULT 10,
-  ADD COLUMN location          VARCHAR(40) NOT NULL DEFAULT 'asia-southeast1',
   ADD CONSTRAINT ck_ai_policy_timeout     CHECK (timeout_s BETWEEN 5 AND 120),
   ADD CONSTRAINT ck_ai_policy_output      CHECK (max_output_tokens BETWEEN 256 AND 65536),
   ADD CONSTRAINT ck_ai_policy_thinking    CHECK (thinking_level IN ('minimal', 'low', 'medium', 'high')),
-  ADD CONSTRAINT ck_ai_policy_file_size   CHECK (max_file_mb BETWEEN 1 AND 20),
-  ADD CONSTRAINT ck_ai_policy_location    CHECK (location ~ '^[a-z][a-z0-9-]*[a-z0-9]$');
+  ADD CONSTRAINT ck_ai_policy_file_size   CHECK (max_file_mb BETWEEN 1 AND 20);
 
 -- ai_grant: a superuser can end a company's grant early (owner, 2026-11-20). Ending sets expires_at
 -- to now, so the allowance stops counting it; these two say when and who (the superuser's email),

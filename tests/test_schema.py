@@ -449,6 +449,9 @@ def test_the_xero_optional_patch_matches_a_fresh_build_and_its_down_patch_revers
 
         done = _run_cli("patch", str(EXPAND_PATCH), "--apply", database_url=url)
         assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        # a database this old gets every later patch in order; 2026-11-23 replaces a function EXPAND made
+        later = _run_cli("patch", str(LONG_CODES_PATCH), "--apply", database_url=url)
+        assert later.returncode == 0, later.stdout + later.stderr
         got = _catalogue(conn)
         diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
         assert not diff, diff  # (only in a fresh build, only after the patch)
@@ -1241,6 +1244,8 @@ def test_the_ai_patch_matches_a_fresh_build_seeds_the_policy_and_its_down_patch_
         assert settings.returncode == 0, settings.stdout + settings.stderr
         ended = _run_cli("patch", str(ENDED_PATCH), "--apply", database_url=url)
         assert ended.returncode == 0, ended.stdout + ended.stderr
+        no_location = _run_cli("patch", str(NO_LOCATION_PATCH), "--apply", database_url=url)  # 2026-11-23
+        assert no_location.returncode == 0, no_location.stdout + no_location.stderr
         got = _catalogue(conn)
         diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
         assert not diff, diff
@@ -1444,7 +1449,9 @@ def test_the_ai_settings_patch_matches_a_fresh_build_keeps_the_readers_on_and_ho
     """2026-11-20 (owner): ai_policy holds the readers' settings that were each service's environment -
     the two readers' switches, the timeout, the token budget, the thinking level and the largest
     document. Down then up lands on a fresh build; the patch keeps both readers on with the values the
-    services ran with; out-of-range values are refused; a second run stops at its guard."""
+    services ran with; out-of-range values are refused; a second run stops at its guard. (Its location
+    column is dropped again by 2026-11-23, so the database is taken back to v0.16 first and the drop
+    patch follows the way up, as a database of that age would get them.)"""
     import psycopg
 
     from minty_db.testing import pg
@@ -1465,19 +1472,23 @@ def test_the_ai_settings_patch_matches_a_fresh_build_keeps_the_readers_on_and_ho
             "VALUES (1, 'gemini-3.5-flash', '{\"tokens\": 20000}', '[]')"
         )
 
+        back = _run_cli("patch", str(NO_LOCATION_DOWN), "--apply", database_url=url)
+        assert back.returncode == 0, back.stdout + back.stderr
         down = _run_cli("patch", str(AI_SETTINGS_DOWN), "--apply", database_url=url)
         assert down.returncode == 0, down.stdout + down.stderr
         done = _run_cli("patch", str(AI_SETTINGS_PATCH), "--apply", database_url=url)
         assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        later = _run_cli("patch", str(NO_LOCATION_PATCH), "--apply", database_url=url)
+        assert later.returncode == 0, later.stdout + later.stderr
         got = _catalogue(conn)
         diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
         assert not diff, diff
 
         cur.execute(
             "SELECT receipt_reader_on, invoice_reader_on, timeout_s, max_output_tokens, thinking_level, "
-            "max_file_mb, location FROM ai_policy"
+            "max_file_mb FROM ai_policy"
         )
-        assert cur.fetchall() == [(True, True, 25, 4096, "low", 10, "asia-southeast1")]
+        assert cur.fetchall() == [(True, True, 25, 4096, "low", 10)]
         for bad in (
             "timeout_s = 4",
             "timeout_s = 121",
@@ -1486,16 +1497,10 @@ def test_the_ai_settings_patch_matches_a_fresh_build_keeps_the_readers_on_and_ho
             "thinking_level = 'extreme'",
             "max_file_mb = 0",
             "max_file_mb = 21",
-            "location = ''",
-            "location = 'Asia Southeast1'",
-            "location = 'asia-southeast1;drop'",
         ):
             with pytest.raises(psycopg.errors.CheckViolation):
                 cur.execute(f"UPDATE ai_policy SET {bad}")
-        cur.execute(
-            "UPDATE ai_policy SET timeout_s = 120, max_output_tokens = 256, thinking_level = 'minimal', "
-            "location = 'global'"
-        )
+        cur.execute("UPDATE ai_policy SET timeout_s = 120, max_output_tokens = 256, thinking_level = 'minimal'")
 
         again = _run_cli("patch", str(AI_SETTINGS_PATCH), "--apply", database_url=url)
         assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
@@ -1553,6 +1558,119 @@ def test_the_grant_ended_patch_matches_a_fresh_build_and_holds_both_or_neither()
 
         again = _run_cli("patch", str(ENDED_PATCH), "--apply", database_url=url)
         assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
+        conn.close()
+    finally:
+        pg.drop_database(name)
+
+
+LONG_CODES_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-23_long_xero_codes.sql"
+LONG_CODES_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-23_long_xero_codes_down.sql"
+
+
+@postgres_only
+def test_a_xero_code_longer_than_ten_is_no_code_for_every_account_type():
+    """2026-11-23: a Xero organisation sent CURRENT accounts whose "code" was the account's name
+    ("Amount due from LEE Min Ho"); account_code_from_xero blanked a long code for BANK only, so
+    account_info.code (10 characters) refused the row and the whole connect failed. Any code over 10
+    is a name, not a code: code stays empty, xero_code keeps Xero's value. Down then up lands on a
+    fresh build, and the patch can run again."""
+    import uuid
+
+    from minty_db.testing import pg
+
+    base = os.environ.get("MINTY_TEST_PG_DBNAME", "minty_test")
+    name = f"{base}_long_codes"
+    try:
+        built = pg.build(name)
+        conn = pg.connect(built.uri)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET search_path = pettycashv3")
+        url = built.uri + "?schema=pettycashv3"
+        assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
+        expected = _catalogue(conn)
+
+        company = uuid.uuid4()
+        cur.execute("INSERT INTO entities (id, name) VALUES (%s, 'Noodles')", (company,))
+
+        def stored(kind, xero_code):
+            row = uuid.uuid4()
+            cur.execute(
+                "INSERT INTO account_info (id, entity_id, type, name, xero_account_id, xero_code, status) "
+                "VALUES (%s, %s, %s, 'An account', %s, %s, 'ACTIVE')",
+                (row, company, kind, str(row), xero_code),
+            )
+            cur.execute("SELECT code, xero_code FROM account_info WHERE id = %s", (row,))
+            return row, cur.fetchone()
+
+        assert stored("CURRENT", "Amount due from LEE Min Ho")[1] == (None, "Amount due from LEE Min Ho")
+        assert stored("BANK", "Business Integrated HKD Savings")[1] == (None, "Business Integrated HKD Savings")
+        assert stored("EXPENSE", "40990002")[1] == ("40990002", "40990002")
+        assert stored("EXPENSE", "ABCDEFGHIJ")[1] == ("ABCDEFGHIJ", "ABCDEFGHIJ")  # exactly 10 is a code
+        row, _ = stored("EXPENSE", "400")
+        cur.execute("UPDATE account_info SET xero_code = 'KPAY (Noodle Town)', type = 'CURRENT' WHERE id = %s", (row,))
+        cur.execute("SELECT code FROM account_info WHERE id = %s", (row,))
+        assert cur.fetchone()[0] is None
+
+        down = _run_cli("patch", str(LONG_CODES_DOWN), "--apply", database_url=url)
+        assert down.returncode == 0, down.stdout + down.stderr
+        dry = _run_cli("patch", str(LONG_CODES_PATCH), database_url=url)
+        assert dry.returncode == 0 and "DRY RUN" in dry.stdout, dry.stdout + dry.stderr
+        for _ in range(2):  # CREATE OR REPLACE: a second run changes nothing
+            done = _run_cli("patch", str(LONG_CODES_PATCH), "--apply", database_url=url)
+            assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+            got = _catalogue(conn)
+            diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
+            assert not diff, diff
+        conn.close()
+    finally:
+        pg.drop_database(name)
+
+
+NO_LOCATION_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-23_drop_ai_policy_location.sql"
+NO_LOCATION_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-23_drop_ai_policy_location_down.sql"
+
+
+@postgres_only
+def test_ai_policy_has_no_location_and_the_drop_patch_matches_a_fresh_build():
+    """2026-11-23 (owner: "no need for setting region"): every AI read runs on Vertex AI's global
+    endpoint (minty-shared v0.12), so ai_policy.location and ck_ai_policy_location go. A fresh build
+    has neither; down puts the column back (global, the CHECK) and up lands on a fresh build again,
+    keeping the policy row; a second run stops at its guard."""
+    from minty_db.testing import pg
+
+    base = os.environ.get("MINTY_TEST_PG_DBNAME", "minty_test")
+    name = f"{base}_no_location"
+    try:
+        built = pg.build(name)
+        conn = pg.connect(built.uri)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET search_path = pettycashv3")
+        url = built.uri + "?schema=pettycashv3"
+        assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
+        expected = _catalogue(conn)
+        assert not any(t == "ai_policy" and c == "location" for t, c, *_ in expected["columns"])
+        assert not any(k == "ck_ai_policy_location" for _, k, *_ in expected["constraints"])
+        cur.execute(
+            "INSERT INTO ai_policy (id, primary_model, default_grant, limit_rules) "
+            "VALUES (1, 'gemini-3.5-flash-lite', '{\"tokens\": 20000}', '[]')"
+        )
+
+        down = _run_cli("patch", str(NO_LOCATION_DOWN), "--apply", database_url=url)
+        assert down.returncode == 0, down.stdout + down.stderr
+        cur.execute("SELECT location FROM ai_policy")
+        assert cur.fetchall() == [("global",)]
+        done = _run_cli("patch", str(NO_LOCATION_PATCH), "--apply", database_url=url)
+        assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        got = _catalogue(conn)
+        diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
+        assert not diff, diff
+        cur.execute("SELECT primary_model FROM ai_policy")
+        assert cur.fetchall() == [("gemini-3.5-flash-lite",)]
+
+        again = _run_cli("patch", str(NO_LOCATION_PATCH), "--apply", database_url=url)
+        assert again.returncode != 0 and "already gone from this schema" in again.stdout + again.stderr
         conn.close()
     finally:
         pg.drop_database(name)
