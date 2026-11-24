@@ -111,7 +111,7 @@ INSERT INTO pettycashv3.ai_policy (id, primary_model, backup_model, default_gran
                                   receipt_reader_on, invoice_reader_on, timeout_s, max_output_tokens,
                                   thinking_level, max_file_mb, updated_by)
 VALUES
-  (1, 'gemini-3.5-flash', NULL, '{"tokens": 20000}', '[]', true, true, 25, 4096, 'low', 10,
+  (1, 'gemini-3.5-flash-lite', NULL, '{"tokens": 20000}', '[]', true, true, 25, 4096, 'low', 10,
    'seed_catalogue.sql')
 ON CONFLICT (id) DO NOTHING;
 
