@@ -3008,8 +3008,9 @@ CREATE INDEX idx_account_change_log_entity  ON account_change_log (entity_id, ch
 CREATE INDEX idx_account_change_log_account ON account_change_log (account_id);
 
 -- account_match_draft: the matching screen's picks until the replace is confirmed, so "Save and finish later" keeps them.
--- One pick per Minty account; several accounts may pick one Xero account (401 and 402 -> 477), because
--- nothing is linked yet: the replace combines them, writes the links and deletes the picks in one transaction
+-- One pick per Minty account and one Minty account per Xero account (the user, 2026-11-24: accounts are
+-- never merged, so two can't share a Xero account); the replace writes the links and deletes the picks in
+-- one transaction
 CREATE TABLE account_match_draft (
   account_id       UUID         NOT NULL,
   entity_id        UUID         NOT NULL,
@@ -3024,7 +3025,37 @@ CREATE TABLE account_match_draft (
   CONSTRAINT fk_account_match_user FOREIGN KEY (picked_by) REFERENCES "user" (id) ON DELETE SET NULL
 );
 CREATE INDEX idx_account_match_draft_entity ON account_match_draft (entity_id);
-CREATE INDEX idx_account_match_draft_xero   ON account_match_draft (xero_account_id);
+CREATE UNIQUE INDEX uq_account_match_draft_xero ON account_match_draft (xero_account_id);
+
+-- contact_match_draft: the matching screen's contacts step (the user, 2026-11-24), saved like the accounts'
+-- picks until Finish. One row per supplier still to link (contact_id) and per daily-closing contact still to
+-- choose (slot). A supplier takes a Xero contact or stays new (add_to_xero: Minty puts it in Xero at its
+-- first publish, C1); a slot always takes a Xero contact
+CREATE TABLE contact_match_draft (
+  id               UUID         NOT NULL DEFAULT gen_random_uuid(),
+  entity_id        UUID         NOT NULL,
+  contact_id       UUID         NULL,       -- the supplier (xero_contact_sync)
+  slot             VARCHAR(20)  NULL,       -- daily closing's contact: cash_sale | director | discrepancy
+  xero_contact_id  UUID         NULL,       -- the Xero contact picked (a mirror row)
+  add_to_xero      BOOLEAN      NOT NULL DEFAULT FALSE,
+  picked_by        UUID         NULL,       -- NULL = Minty's own pick (the same name), not changed by a user
+  picked_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  CONSTRAINT contact_match_draft_pkey PRIMARY KEY (id),
+  CONSTRAINT uq_contact_match_contact UNIQUE (contact_id),
+  CONSTRAINT uq_contact_match_slot UNIQUE (entity_id, slot),
+  CONSTRAINT chk_contact_match_target CHECK ((contact_id IS NULL) <> (slot IS NULL)),
+  CONSTRAINT chk_contact_match_slot CHECK (slot IS NULL OR slot IN ('cash_sale','director','discrepancy')),
+  CONSTRAINT chk_contact_match_answer CHECK ((xero_contact_id IS NOT NULL) <> add_to_xero),
+  CONSTRAINT chk_contact_match_new CHECK (NOT add_to_xero OR contact_id IS NOT NULL),
+  CONSTRAINT fk_contact_match_contact FOREIGN KEY (contact_id, entity_id)
+    REFERENCES xero_contact_sync (id, entity_id) ON DELETE CASCADE,
+  CONSTRAINT fk_contact_match_xero FOREIGN KEY (xero_contact_id, entity_id)
+    REFERENCES xero_contact (id, entity_id) ON DELETE CASCADE,   -- a Xero contact gone = pick again
+  CONSTRAINT fk_contact_match_entity FOREIGN KEY (entity_id) REFERENCES entities (id) ON DELETE CASCADE,
+  CONSTRAINT fk_contact_match_user FOREIGN KEY (picked_by) REFERENCES "user" (id) ON DELETE SET NULL
+);
+CREATE INDEX idx_contact_match_draft_entity ON contact_match_draft (entity_id);
+CREATE INDEX idx_contact_match_draft_xero   ON contact_match_draft (xero_contact_id);
 
 -- contact_change_log: the same for suppliers: linked to a Xero contact of the same name, created in Xero,
 -- merged. A supplier keeps its Minty name, so nothing is ever 'overwritten'
@@ -3169,7 +3200,9 @@ BEGIN
       EXECUTE format('SELECT %s.record_status_from_xero($1)', s) INTO NEW.record_status USING NEW.status;
     END IF;
   ELSE
-    IF NEW.xero_code IS DISTINCT FROM OLD.xero_code OR NEW.type IS DISTINCT FROM OLD.type THEN
+    -- Minty's code is Minty's (the user, 2026-11-24: Minty Code + Xero Code): Xero's code fills it
+    -- only while it is empty, never over one
+    IF NEW.code IS NULL AND (NEW.xero_code IS DISTINCT FROM OLD.xero_code OR NEW.type IS DISTINCT FROM OLD.type) THEN
       EXECUTE format('SELECT %s.account_code_from_xero($1, $2)', s) INTO NEW.code USING NEW.xero_code, NEW.type;
     END IF;
     IF NEW.type IS DISTINCT FROM OLD.type THEN

@@ -70,7 +70,7 @@ class AccountInfo(UpdatedAtMixin):
 class AccountMatchDraft(models.Model):
     account = models.OneToOneField('AccountInfo', models.CASCADE, db_constraint=False, related_name='+', primary_key=True)
     entity_id = models.UUIDField()
-    xero_account = models.ForeignKey('XeroAccount', models.CASCADE, db_constraint=False, related_name='+')
+    xero_account = models.OneToOneField('XeroAccount', models.CASCADE, db_constraint=False, related_name='+')
     picked_by = models.UUIDField(null=True, blank=True)
     picked_at = models.DateTimeField(db_default=Now())
 
@@ -348,6 +348,23 @@ class ContactChangeLog(models.Model):
 
     class Meta:
         db_table = 'contact_change_log'
+
+
+class ContactMatchDraft(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4)
+    entity = models.ForeignKey('Entity', models.CASCADE, db_constraint=False, related_name='+')
+    contact = models.OneToOneField('XeroContactSync', models.CASCADE, db_constraint=False, related_name='+', null=True, blank=True)
+    slot = models.CharField(max_length=20, null=True, blank=True)
+    xero_contact = models.ForeignKey('XeroContact', models.CASCADE, db_constraint=False, related_name='+', null=True, blank=True)
+    add_to_xero = models.BooleanField(db_default=False)
+    picked_by = models.UUIDField(null=True, blank=True)
+    picked_at = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        db_table = 'contact_match_draft'
+        constraints = [
+            models.UniqueConstraint(fields=['entity', 'slot'], name='uq_contact_match_slot'),
+        ]
 
 
 class CountryInfo(models.Model):

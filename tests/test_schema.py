@@ -422,6 +422,10 @@ def test_the_xero_optional_patch_matches_a_fresh_build_and_its_down_patch_revers
         assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
         expected = _catalogue(conn)
 
+        # 2026-11-24's contact_match_draft hangs on EXPAND's xero_contact: it goes first, as a database
+        # this old never had it
+        strict = _run_cli("patch", str(STRICT_DOWN), "--apply", database_url=url)
+        assert strict.returncode == 0, strict.stdout + strict.stderr
         down = _run_cli("patch", str(EXPAND_DOWN), "--apply", database_url=url)
         assert down.returncode == 0, down.stdout + down.stderr
         cur.execute("SELECT to_regclass('xero_account'), to_regtype('account_type')")
@@ -452,6 +456,8 @@ def test_the_xero_optional_patch_matches_a_fresh_build_and_its_down_patch_revers
         # a database this old gets every later patch in order; 2026-11-23 replaces a function EXPAND made
         later = _run_cli("patch", str(LONG_CODES_PATCH), "--apply", database_url=url)
         assert later.returncode == 0, later.stdout + later.stderr
+        strict = _run_cli("patch", str(STRICT_PATCH), "--apply", database_url=url)  # 2026-11-24
+        assert strict.returncode == 0, strict.stdout + strict.stderr
         got = _catalogue(conn)
         diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
         assert not diff, diff  # (only in a fresh build, only after the patch)
@@ -1608,7 +1614,10 @@ def test_a_xero_code_longer_than_ten_is_no_code_for_every_account_type():
         assert stored("EXPENSE", "40990002")[1] == ("40990002", "40990002")
         assert stored("EXPENSE", "ABCDEFGHIJ")[1] == ("ABCDEFGHIJ", "ABCDEFGHIJ")  # exactly 10 is a code
         row, _ = stored("EXPENSE", "400")
-        cur.execute("UPDATE account_info SET xero_code = 'KPAY (Noodle Town)', type = 'CURRENT' WHERE id = %s", (row,))
+        cur.execute(
+            "UPDATE account_info SET code = NULL, xero_code = 'KPAY (Noodle Town)', type = 'CURRENT' WHERE id = %s",
+            (row,),
+        )  # an empty code is filled from Xero's (v0.18 keeps one already there)
         cur.execute("SELECT code FROM account_info WHERE id = %s", (row,))
         assert cur.fetchone()[0] is None
 
@@ -1671,6 +1680,153 @@ def test_ai_policy_has_no_location_and_the_drop_patch_matches_a_fresh_build():
 
         again = _run_cli("patch", str(NO_LOCATION_PATCH), "--apply", database_url=url)
         assert again.returncode != 0 and "already gone from this schema" in again.stdout + again.stderr
+        conn.close()
+    finally:
+        pg.drop_database(name)
+
+
+STRICT_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-24_strict_matching.sql"
+STRICT_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-24_strict_matching_down.sql"
+
+
+@postgres_only
+def test_matching_is_one_to_one_contacts_are_drafted_and_minty_keeps_its_code():
+    """2026-11-24 (the user): accounts are never merged, so one Minty account per Xero account in the
+    matching's picks; the contacts step's picks are saved like the accounts'; Xero's code fills
+    account_info.code only while it is empty (Minty Code + Xero Code). Down then up lands on a fresh
+    build, clearing duplicate picks an open page still had; a second run stops at the guard."""
+    import uuid
+
+    import psycopg
+
+    from minty_db.testing import pg
+
+    base = os.environ.get("MINTY_TEST_PG_DBNAME", "minty_test")
+    name = f"{base}_strict"
+    try:
+        built = pg.build(name)
+        conn = pg.connect(built.uri)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET search_path = pettycashv3")
+        url = built.uri + "?schema=pettycashv3"
+        assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
+        expected = _catalogue(conn)
+
+        company = uuid.uuid4()
+        cur.execute("INSERT INTO entities (id, name) VALUES (%s, 'Olive')", (company,))
+
+        def account(code, xero_code, kind="EXPENSE"):
+            row = uuid.uuid4()
+            cur.execute(
+                "INSERT INTO account_info (id, entity_id, type, name, code, xero_code, status, source) "
+                "VALUES (%s, %s, %s, %s, %s, %s, 'ACTIVE', 'user')",
+                (row, company, kind, f"Account {row}"[:40], code, xero_code),
+            )
+            return row
+
+        def code_of(row):
+            cur.execute("SELECT code, xero_code FROM account_info WHERE id = %s", (row,))
+            return cur.fetchone()
+
+        # Minty Code + Xero Code: Xero's code never replaces Minty's
+        kept = account("6001", "6001")
+        cur.execute("UPDATE account_info SET xero_code = '477', xero_account_id = 'x-w' WHERE id = %s", (kept,))
+        assert code_of(kept) == ("6001", "477")
+        cur.execute("UPDATE account_info SET type = 'OVERHEADS' WHERE id = %s", (kept,))
+        assert code_of(kept) == ("6001", "477")
+        blank = account(None, None, "BANK")  # a bank with no code: Xero's fills it
+        cur.execute("UPDATE account_info SET xero_code = '090' WHERE id = %s", (blank,))
+        assert code_of(blank) == ("090", "090")
+        assert code_of(account(None, "469")) == ("469", "469"), "an insert still takes Xero's"
+
+        copies = []
+        for guid in ("x-1", "x-2"):
+            copy = uuid.uuid4()
+            cur.execute(
+                "INSERT INTO xero_account (id, entity_id, xero_org_id, xero_guid, code, name, xero_type) "
+                "VALUES (%s, %s, 'ORG', %s, '400', 'Advertising', 'EXPENSE')",
+                (copy, company, guid),
+            )
+            copies.append(copy)
+        first, second = account("6100", None), account("6101", None)
+        cur.execute(
+            "INSERT INTO account_match_draft (account_id, entity_id, xero_account_id) VALUES (%s, %s, %s)",
+            (first, company, copies[0]),
+        )
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            cur.execute(
+                "INSERT INTO account_match_draft (account_id, entity_id, xero_account_id) VALUES (%s, %s, %s)",
+                (second, company, copies[0]),
+            )
+
+        supplier, other = uuid.uuid4(), uuid.uuid4()
+        for row, label in ((supplier, "ABC Supplies"), (other, "Wing Lee")):
+            cur.execute(
+                "INSERT INTO xero_contact_sync (id, entity_id, name, source) VALUES (%s, %s, %s, 'user')",
+                (row, company, label),
+            )
+        xero_contact = uuid.uuid4()
+        cur.execute(
+            "INSERT INTO xero_contact (id, entity_id, xero_org_id, xero_guid, name) "
+            "VALUES (%s, %s, 'ORG', 'c-1', 'ABC')",
+            (xero_contact, company),
+        )
+        cur.execute(
+            "INSERT INTO contact_match_draft (entity_id, contact_id, xero_contact_id) VALUES (%s, %s, %s)",
+            (company, supplier, xero_contact),
+        )
+        cur.execute(
+            "INSERT INTO contact_match_draft (entity_id, contact_id, add_to_xero) VALUES (%s, %s, TRUE)",
+            (company, other),
+        )
+        cur.execute(
+            "INSERT INTO contact_match_draft (entity_id, slot, xero_contact_id) VALUES (%s, 'director', %s)",
+            (company, xero_contact),
+        )
+        for columns, values in (
+            ("(entity_id, slot, add_to_xero) VALUES (%s, 'cash_sale', TRUE)", (company,)),  # a slot needs a contact
+            ("(entity_id, slot, xero_contact_id) VALUES (%s, 'tips', %s)", (company, xero_contact)),
+            ("(entity_id, xero_contact_id) VALUES (%s, %s)", (company, xero_contact)),  # neither supplier nor slot
+            (
+                "(entity_id, contact_id, slot, xero_contact_id) VALUES (%s, %s, 'cash_sale', %s)",
+                (company, uuid.uuid4(), xero_contact),
+            ),
+            ("(entity_id, slot) VALUES (%s, 'cash_sale')", (company,)),  # no answer
+            (
+                "(entity_id, slot, xero_contact_id, add_to_xero) VALUES (%s, 'cash_sale', %s, TRUE)",
+                (company, xero_contact),
+            ),
+        ):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                cur.execute("INSERT INTO contact_match_draft " + columns, values)
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            cur.execute(
+                "INSERT INTO contact_match_draft (entity_id, slot, xero_contact_id) VALUES (%s, 'director', %s)",
+                (company, xero_contact),
+            )
+
+        down = _run_cli("patch", str(STRICT_DOWN), "--apply", database_url=url)
+        assert down.returncode == 0, down.stdout + down.stderr
+        cur.execute("UPDATE account_info SET xero_code = '478' WHERE id = %s", (kept,))
+        assert code_of(kept) == ("478", "478"), "before v0.18 Xero's code overwrote Minty's"
+        cur.execute(
+            "INSERT INTO account_match_draft (account_id, entity_id, xero_account_id, picked_at) "
+            "VALUES (%s, %s, %s, now() + interval '1 minute')",
+            (second, company, copies[0]),
+        )
+        dry = _run_cli("patch", str(STRICT_PATCH), database_url=url)
+        assert dry.returncode == 0 and "DRY RUN" in dry.stdout, dry.stdout + dry.stderr
+        done = _run_cli("patch", str(STRICT_PATCH), "--apply", database_url=url)
+        assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        got = _catalogue(conn)
+        diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
+        assert not diff, diff
+        cur.execute("SELECT account_id FROM account_match_draft WHERE entity_id = %s", (company,))
+        assert cur.fetchall() == [(first,)], "the earliest pick stays; the duplicate is cleared"
+
+        again = _run_cli("patch", str(STRICT_PATCH), "--apply", database_url=url)
+        assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
         conn.close()
     finally:
         pg.drop_database(name)
