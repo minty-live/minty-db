@@ -106,12 +106,17 @@ ON CONFLICT (id) DO NOTHING;
 --                  reply's token budget (thinking included), how hard it thinks, the largest
 --                  document read. Every read runs on Vertex AI's global endpoint (owner,
 --                  2026-11-23: no region setting).
+--   model_prices   each model's Vertex AI list price, USD per 1M tokens (the user, 2026-11-24;
+--                  global endpoint, standard tier, checked 2026-11-24) - what ai_read.estimated_cost
+--                  is worked out from. Every model the policy names must have one.
 -- --------------------------------------------------------------------------
 INSERT INTO pettycashv3.ai_policy (id, primary_model, backup_model, default_grant, limit_rules,
                                   receipt_reader_on, invoice_reader_on, timeout_s, max_output_tokens,
-                                  thinking_level, max_file_mb, updated_by)
+                                  thinking_level, max_file_mb, model_prices, updated_by)
 VALUES
   (1, 'gemini-3.5-flash-lite', NULL, '{"tokens": 20000}', '[]', true, true, 25, 4096, 'low', 10,
+   '{"gemini-3.5-flash-lite": {"input": 0.30, "output": 2.50, "cached_input": 0.03},
+     "gemini-3.5-flash": {"input": 1.50, "output": 9.00, "cached_input": 0.15}}',
    'seed_catalogue.sql')
 ON CONFLICT (id) DO NOTHING;
 

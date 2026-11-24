@@ -148,6 +148,7 @@ class AiPolicy(UpdatedAtMixin):
     max_output_tokens = models.IntegerField(db_default=4096)
     thinking_level = models.CharField(max_length=10, db_default='low')
     max_file_mb = models.IntegerField(db_default=10)
+    model_prices = models.JSONField()
 
     class Meta:
         db_table = 'ai_policy'

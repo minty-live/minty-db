@@ -1252,6 +1252,8 @@ def test_the_ai_patch_matches_a_fresh_build_seeds_the_policy_and_its_down_patch_
         assert ended.returncode == 0, ended.stdout + ended.stderr
         no_location = _run_cli("patch", str(NO_LOCATION_PATCH), "--apply", database_url=url)  # 2026-11-23
         assert no_location.returncode == 0, no_location.stdout + no_location.stderr
+        prices = _run_cli("patch", str(PRICES_PATCH), "--apply", database_url=url)  # 2026-11-24
+        assert prices.returncode == 0, prices.stdout + prices.stderr
         got = _catalogue(conn)
         diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
         assert not diff, diff
@@ -1259,7 +1261,10 @@ def test_the_ai_patch_matches_a_fresh_build_seeds_the_policy_and_its_down_patch_
         cur.execute("SELECT primary_model, backup_model, default_grant, limit_rules FROM ai_policy")
         assert cur.fetchall() == [("gemini-3.5-flash-lite", None, {"tokens": 20000}, [])]
         with pytest.raises(psycopg.errors.CheckViolation):
-            cur.execute("INSERT INTO ai_policy (id, primary_model, limit_rules) VALUES (2, 'gemini-3.8-flash', '[]')")
+            cur.execute(  # one row only (priced, so the singleton check is what refuses it)
+                "INSERT INTO ai_policy (id, primary_model, limit_rules, model_prices) "
+                "VALUES (2, 'gemini-3.8-flash', '[]', '{\"gemini-3.8-flash\": {}}')"
+            )
         with pytest.raises(psycopg.errors.CheckViolation):
             cur.execute("UPDATE ai_policy SET limit_rules = '{\"reads\": 10}'")
 
@@ -1474,10 +1479,13 @@ def test_the_ai_settings_patch_matches_a_fresh_build_keeps_the_readers_on_and_ho
         assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
         expected = _catalogue(conn)
         cur.execute(
-            "INSERT INTO ai_policy (id, primary_model, default_grant, limit_rules) "
-            "VALUES (1, 'gemini-3.5-flash', '{\"tokens\": 20000}', '[]')"
+            "INSERT INTO ai_policy (id, primary_model, default_grant, limit_rules, model_prices) "
+            "VALUES (1, 'gemini-3.5-flash', '{\"tokens\": 20000}', '[]', "
+            '\'{"gemini-3.5-flash": {"input": 1.5, "output": 9, "cached_input": 0.15}}\')'
         )
 
+        unpriced = _run_cli("patch", str(PRICES_DOWN), "--apply", database_url=url)
+        assert unpriced.returncode == 0, unpriced.stdout + unpriced.stderr
         back = _run_cli("patch", str(NO_LOCATION_DOWN), "--apply", database_url=url)
         assert back.returncode == 0, back.stdout + back.stderr
         down = _run_cli("patch", str(AI_SETTINGS_DOWN), "--apply", database_url=url)
@@ -1486,6 +1494,8 @@ def test_the_ai_settings_patch_matches_a_fresh_build_keeps_the_readers_on_and_ho
         assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
         later = _run_cli("patch", str(NO_LOCATION_PATCH), "--apply", database_url=url)
         assert later.returncode == 0, later.stdout + later.stderr
+        priced = _run_cli("patch", str(PRICES_PATCH), "--apply", database_url=url)
+        assert priced.returncode == 0, priced.stdout + priced.stderr
         got = _catalogue(conn)
         diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
         assert not diff, diff
@@ -1662,8 +1672,9 @@ def test_ai_policy_has_no_location_and_the_drop_patch_matches_a_fresh_build():
         assert not any(t == "ai_policy" and c == "location" for t, c, *_ in expected["columns"])
         assert not any(k == "ck_ai_policy_location" for _, k, *_ in expected["constraints"])
         cur.execute(
-            "INSERT INTO ai_policy (id, primary_model, default_grant, limit_rules) "
-            "VALUES (1, 'gemini-3.5-flash-lite', '{\"tokens\": 20000}', '[]')"
+            "INSERT INTO ai_policy (id, primary_model, default_grant, limit_rules, model_prices) "
+            "VALUES (1, 'gemini-3.5-flash-lite', '{\"tokens\": 20000}', '[]', "
+            '\'{"gemini-3.5-flash-lite": {"input": 0.3, "output": 2.5, "cached_input": 0.03}}\')'
         )
 
         down = _run_cli("patch", str(NO_LOCATION_DOWN), "--apply", database_url=url)
@@ -1826,6 +1837,70 @@ def test_matching_is_one_to_one_contacts_are_drafted_and_minty_keeps_its_code():
         assert cur.fetchall() == [(first,)], "the earliest pick stays; the duplicate is cleared"
 
         again = _run_cli("patch", str(STRICT_PATCH), "--apply", database_url=url)
+        assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
+        conn.close()
+    finally:
+        pg.drop_database(name)
+
+
+PRICES_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-24_ai_model_prices.sql"
+PRICES_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-24_ai_model_prices_down.sql"
+
+
+@postgres_only
+def test_the_model_prices_patch_matches_a_fresh_build_prices_the_policy_and_refuses_an_unpriced_model():
+    """2026-11-24 (the user): ai_policy.model_prices - each model's Vertex AI price, USD per 1M tokens.
+    Down then up lands on a fresh build; the patch prices both Gemini 3.5 models; a policy may not name
+    a model without a price; a policy naming a model the patch has no price for stops it; a second run
+    stops at its guard."""
+    import psycopg
+
+    from minty_db.testing import pg
+
+    base = os.environ.get("MINTY_TEST_PG_DBNAME", "minty_test")
+    name = f"{base}_ai_prices"
+    try:
+        built = pg.build(name)
+        conn = pg.connect(built.uri)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET search_path = pettycashv3")
+        url = built.uri + "?schema=pettycashv3"
+        assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
+        expected = _catalogue(conn)
+        cur.execute(
+            "INSERT INTO ai_policy (id, primary_model, limit_rules, model_prices) "
+            "VALUES (1, 'gemini-3.5-flash-lite', '[]', '{\"gemini-3.5-flash-lite\": {}}')"
+        )
+
+        down = _run_cli("patch", str(PRICES_DOWN), "--apply", database_url=url)
+        assert down.returncode == 0, down.stdout + down.stderr
+        cur.execute("UPDATE ai_policy SET primary_model = 'gemini-9-unknown'")
+        refused = _run_cli("patch", str(PRICES_PATCH), "--apply", database_url=url)
+        assert refused.returncode != 0 and "no price for" in refused.stdout + refused.stderr
+        cur.execute("UPDATE ai_policy SET primary_model = 'gemini-3.5-flash-lite', backup_model = 'gemini-3.5-flash'")
+        done = _run_cli("patch", str(PRICES_PATCH), "--apply", database_url=url)
+        assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        got = _catalogue(conn)
+        diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
+        assert not diff, diff
+
+        cur.execute("SELECT model_prices FROM ai_policy")
+        assert cur.fetchone()[0] == {
+            "gemini-3.5-flash-lite": {"input": 0.30, "output": 2.50, "cached_input": 0.03},
+            "gemini-3.5-flash": {"input": 1.50, "output": 9.00, "cached_input": 0.15},
+        }
+        for bad in (
+            "primary_model = 'gemini-3.8-flash'",  # no price for it
+            "backup_model = 'gemini-3.8-flash'",
+            "model_prices = '[]'",
+        ):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                cur.execute(f"UPDATE ai_policy SET {bad}")
+        with pytest.raises(psycopg.errors.NotNullViolation):
+            cur.execute("UPDATE ai_policy SET model_prices = NULL")
+
+        again = _run_cli("patch", str(PRICES_PATCH), "--apply", database_url=url)
         assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
         conn.close()
     finally:

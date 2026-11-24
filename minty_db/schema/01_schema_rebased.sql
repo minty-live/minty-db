@@ -3431,4 +3431,17 @@ ALTER TABLE ai_grant
   ADD CONSTRAINT ck_ai_grant_ended CHECK (
     (ended_at IS NULL AND ended_by IS NULL) OR (ended_at IS NOT NULL AND ended_by IS NOT NULL));
 
+-- ai_policy.model_prices (the user, 2026-11-24): each model's list price on Vertex AI's global
+-- endpoint, USD per 1M tokens - {"<model>": {"input": n, "output": n, "cached_input": n}} - from
+-- which every read's ai_read.estimated_cost is worked out (input tokens not from the cache at
+-- "input", cached ones at "cached_input", output and thinking at "output"). It was a constant in
+-- minty-shared's code (Gemini API prices). A price changes with an UPDATE, never a release, and a
+-- policy may not name a model it has no price for, so a model switch carries its price.
+ALTER TABLE ai_policy
+  ADD COLUMN model_prices JSONB NOT NULL,
+  ADD CONSTRAINT ck_ai_policy_prices CHECK (
+    jsonb_typeof(model_prices) = 'object'
+    AND model_prices ? primary_model
+    AND (backup_model IS NULL OR model_prices ? backup_model));
+
 RESET search_path;
