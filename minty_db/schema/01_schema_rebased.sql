@@ -1467,6 +1467,10 @@ CREATE TABLE pettycash_test.entity_pettycash_settings (
   entity_id                   UUID          NOT NULL,
   opening_balance             NUMERIC(14,2) NULL,
   start_date                  DATE          NULL,
+  -- when someone pressed Skip for now on onboarding's Opening Balance (the user, 2026-11-26): the
+  -- balance stays NOT SET (opening_balance/start_date NULL, never 0) and the first petty cash report
+  -- asks for it. Cleared whenever a balance is saved; only the onboarding resume reads it.
+  opening_skipped_at          TIMESTAMPTZ   NULL,
   pettycash_account_id        UUID          NULL,
   bank_account_id             UUID          NULL,
   cash_sale_account_id        UUID          NULL,
@@ -2761,7 +2765,8 @@ SELECT e.id AS entity_id,
        c_cs.name AS cash_sale_contact_name,
        c_dr.name AS director_contact_name,
        c_dc.name AS discrepancy_contact_name,
-       eps.updated_at AS pettycash_settings_updated_at
+       eps.updated_at AS pettycash_settings_updated_at,
+       eps.opening_skipped_at
   FROM pettycash_test.entities e
   LEFT JOIN pettycash_test."user" cu ON cu.id = e.connected_by_user_id
   LEFT JOIN pettycash_test.entity_pettycash_settings eps ON eps.entity_id = e.id

@@ -1905,3 +1905,67 @@ def test_the_model_prices_patch_matches_a_fresh_build_prices_the_policy_and_refu
         conn.close()
     finally:
         pg.drop_database(name)
+
+
+SKIPPED_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-26_opening_skipped_at.sql"
+SKIPPED_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-26_opening_skipped_at_down.sql"
+
+
+@postgres_only
+def test_the_opening_skipped_patch_matches_a_fresh_build_and_keeps_not_set_apart_from_zero():
+    """2026-11-26 (the user): entity_pettycash_settings.opening_skipped_at - onboarding's "Skip for now"
+    on the Opening Balance step. Down then up lands on a fresh build (entity_setup_summary ends with
+    the column); a company's saved settings survive both ways; "not set" stays NULL, apart from a saved
+    0; a second run stops at its guard."""
+    from minty_db.testing import pg
+
+    base = os.environ.get("MINTY_TEST_PG_DBNAME", "minty_test")
+    name = f"{base}_opening_skipped"
+    try:
+        built = pg.build(name)
+        conn = pg.connect(built.uri)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET search_path = pettycashv3")
+        url = built.uri + "?schema=pettycashv3"
+        assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
+        expected = _catalogue(conn)
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = 'pettycashv3' "
+            "AND table_name = 'entity_setup_summary' ORDER BY ordinal_position DESC LIMIT 1"
+        )
+        assert cur.fetchone()[0] == "opening_skipped_at"
+
+        cur.execute(
+            "INSERT INTO entities (id, name) VALUES (gen_random_uuid(), 'Not set'), (gen_random_uuid(), 'Zero')"
+        )
+        cur.execute(
+            "INSERT INTO entity_pettycash_settings (entity_id, opening_balance, start_date) "
+            "SELECT id, CASE WHEN name = 'Zero' THEN 0 END, CASE WHEN name = 'Zero' THEN DATE '2026-11-01' END "
+            "FROM entities WHERE name IN ('Not set', 'Zero')"
+        )
+
+        down = _run_cli("patch", str(SKIPPED_DOWN), "--apply", database_url=url)
+        assert down.returncode == 0, down.stdout + down.stderr
+        done = _run_cli("patch", str(SKIPPED_PATCH), "--apply", database_url=url)
+        assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        got = _catalogue(conn)
+        diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
+        assert not diff, diff
+
+        cur.execute(
+            "SELECT entity_name, opening_balance, start_date, opening_skipped_at FROM entity_setup_summary "
+            "WHERE entity_name IN ('Not set', 'Zero') ORDER BY entity_name"
+        )
+        rows = cur.fetchall()
+        assert [(r[0], r[1] is None, r[2] is None, r[3]) for r in rows] == [
+            ("Not set", True, True, None),
+            ("Zero", False, False, None),
+        ]
+        assert rows[1][1] == 0
+
+        again = _run_cli("patch", str(SKIPPED_PATCH), "--apply", database_url=url)
+        assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
+        conn.close()
+    finally:
+        pg.drop_database(name)

@@ -604,6 +604,7 @@ class EntityPettycashSettings(UpdatedAtMixin):
     entity = models.OneToOneField('Entity', models.CASCADE, db_constraint=False, related_name='+', primary_key=True)
     opening_balance = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
     start_date = models.DateField(null=True, blank=True)
+    opening_skipped_at = models.DateTimeField(null=True, blank=True)
     pettycash_account = models.ForeignKey('AccountInfo', models.SET_NULL, db_constraint=False, related_name='+', null=True, blank=True)
     bank_account = models.ForeignKey('AccountInfo', models.SET_NULL, db_constraint=False, related_name='+', null=True, blank=True)
     cash_sale_account = models.ForeignKey('AccountInfo', models.SET_NULL, db_constraint=False, related_name='+', null=True, blank=True)
@@ -674,6 +675,7 @@ class EntitySetupSummary(models.Model):
     director_contact_name = models.CharField(max_length=150, null=True, blank=True)
     discrepancy_contact_name = models.CharField(max_length=150, null=True, blank=True)
     pettycash_settings_updated_at = models.DateTimeField(null=True, blank=True)
+    opening_skipped_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         managed = False
