@@ -2930,6 +2930,11 @@ ALTER TABLE account_info
 ALTER TABLE account_info
   ADD CONSTRAINT fk_account_merged_into FOREIGN KEY (merged_into_id, entity_id)
     REFERENCES account_info (id, entity_id);
+-- changed in Minty while Xero was off (the user, 2026-11-27): a disconnected company is Minty-only, so its
+-- accounts - linked ones too - are added and edited here; a reconnect then opens the matching for them
+-- (needs_matching) and Finish clears it. NULL = nothing to check.
+ALTER TABLE account_info
+  ADD COLUMN minty_changed_at TIMESTAMPTZ NULL;
 -- one active account per Xero account (Q2, 2026-11-09): accounts matched to the same Xero account are combined
 -- in the replace's transaction, before the survivor takes the link; a merged (archived) account keeps its link.
 -- Safe on today's data: uq_account_entity_xero already holds one account per Xero id per company
@@ -2959,6 +2964,9 @@ ALTER TABLE xero_contact_sync
 ALTER TABLE xero_contact_sync
   ADD CONSTRAINT fk_contact_merged_into FOREIGN KEY (merged_into_id, entity_id)
     REFERENCES xero_contact_sync (id, entity_id);
+-- the same for contacts (the user, 2026-11-27): the reconnect's contacts step asks about them
+ALTER TABLE xero_contact_sync
+  ADD COLUMN minty_changed_at TIMESTAMPTZ NULL;
 
 -- account_module: replaces entity_account_xero and entity_bill_account_xero
 CREATE TABLE account_module (
@@ -3156,8 +3164,9 @@ ALTER TABLE entities
   -- NULL = not chosen, the business type decides (Cash is uses_sales_cash)
   ADD COLUMN sells_electronic BOOLEAN NULL,
   ADD COLUMN sells_delivery   BOOLEAN NULL,
-  -- an open matching of the company's accounts to Xero and why: a first connect, accounts added
-  -- while disconnected, a new organisation, or changing the matches; cleared at Finish
+  -- an open matching of the company's accounts to Xero and why: a first connect, accounts or contacts
+  -- added or changed while disconnected (new_accounts), a new organisation, or changing the matches;
+  -- cleared at Finish
   ADD COLUMN xero_matching xero_matching NULL;
 -- every company answers the cash question ("Not sure" = TRUE); business_type NULL = "None of these"
 -- (only the shared rows). Both NULL = onboarded before the questions

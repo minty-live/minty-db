@@ -56,6 +56,7 @@ class AccountInfo(UpdatedAtMixin):
     xero_account_link = models.ForeignKey('XeroAccount', models.DO_NOTHING, db_constraint=False, related_name='+', null=True, blank=True)
     created_by = models.UUIDField(null=True, blank=True)
     merged_into = models.ForeignKey('AccountInfo', models.DO_NOTHING, db_constraint=False, related_name='+', null=True, blank=True)
+    minty_changed_at = models.DateTimeField(null=True, blank=True)
     active_xero_link = models.GeneratedField(expression=models.Case(models.When(record_status="active", then=models.F("xero_account_link_id")), default=models.Value(None)), output_field=models.UUIDField(null=True, blank=True), db_persist=True)
 
     class Meta:
@@ -1372,6 +1373,7 @@ class XeroContactSync(UpdatedAtMixin):
     xero_contact_link = models.ForeignKey('XeroContact', models.DO_NOTHING, db_constraint=False, related_name='+', null=True, blank=True)
     created_by = models.UUIDField(null=True, blank=True)
     merged_into = models.ForeignKey('XeroContactSync', models.DO_NOTHING, db_constraint=False, related_name='+', null=True, blank=True)
+    minty_changed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'xero_contact_sync'

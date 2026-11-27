@@ -1969,3 +1969,58 @@ def test_the_opening_skipped_patch_matches_a_fresh_build_and_keeps_not_set_apart
         conn.close()
     finally:
         pg.drop_database(name)
+
+
+CHANGED_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-27_minty_changed_at.sql"
+CHANGED_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-27_minty_changed_at_down.sql"
+
+
+@postgres_only
+def test_the_minty_changed_at_patch_matches_a_fresh_build_and_keeps_the_rows():
+    """2026-11-27 (the user): account_info.minty_changed_at and xero_contact_sync.minty_changed_at -
+    changed in Minty while Xero was off. Down then up lands on a fresh build; the rows survive both
+    ways, unmarked; a second run stops at its guard."""
+    from minty_db.testing import pg
+
+    base = os.environ.get("MINTY_TEST_PG_DBNAME", "minty_test")
+    name = f"{base}_minty_changed"
+    try:
+        built = pg.build(name)
+        conn = pg.connect(built.uri)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET search_path = pettycashv3")
+        url = built.uri + "?schema=pettycashv3"
+        assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
+        expected = _catalogue(conn)
+
+        cur.execute("INSERT INTO entities (id, name) VALUES (gen_random_uuid(), 'Offline') RETURNING id")
+        entity = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO account_info (entity_id, type, name, xero_account_id) "
+            "VALUES (%s, 'EXPENSE', 'Rent', 'x-rent')",
+            (entity,),
+        )
+        cur.execute(
+            "INSERT INTO xero_contact_sync (entity_id, xero_contact_id, name) VALUES (%s, 'x-kee', 'Kee Wah')",
+            (entity,),
+        )
+
+        down = _run_cli("patch", str(CHANGED_DOWN), "--apply", database_url=url)
+        assert down.returncode == 0, down.stdout + down.stderr
+        done = _run_cli("patch", str(CHANGED_PATCH), "--apply", database_url=url)
+        assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        got = _catalogue(conn)
+        diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
+        assert not diff, diff
+
+        cur.execute("SELECT name, minty_changed_at FROM account_info WHERE entity_id = %s", (entity,))
+        assert cur.fetchall() == [("Rent", None)]
+        cur.execute("SELECT name, minty_changed_at FROM xero_contact_sync WHERE entity_id = %s", (entity,))
+        assert cur.fetchall() == [("Kee Wah", None)]
+
+        again = _run_cli("patch", str(CHANGED_PATCH), "--apply", database_url=url)
+        assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
+        conn.close()
+    finally:
+        pg.drop_database(name)
