@@ -1254,6 +1254,8 @@ def test_the_ai_patch_matches_a_fresh_build_seeds_the_policy_and_its_down_patch_
         assert no_location.returncode == 0, no_location.stdout + no_location.stderr
         prices = _run_cli("patch", str(PRICES_PATCH), "--apply", database_url=url)  # 2026-11-24
         assert prices.returncode == 0, prices.stdout + prices.stderr
+        cycles = _run_cli("patch", str(CYCLES_PATCH), "--apply", database_url=url)  # 2026-11-27
+        assert cycles.returncode == 0, cycles.stdout + cycles.stderr
         got = _catalogue(conn)
         diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
         assert not diff, diff
@@ -2021,6 +2023,148 @@ def test_the_minty_changed_at_patch_matches_a_fresh_build_and_keeps_the_rows():
 
         again = _run_cli("patch", str(CHANGED_PATCH), "--apply", database_url=url)
         assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
+        conn.close()
+    finally:
+        pg.drop_database(name)
+
+
+CYCLES_PATCH = ROOT / "minty_db" / "schema" / "patches" / "2026-11-27_ai_grant_cycles.sql"
+CYCLES_DOWN = ROOT / "minty_db" / "schema" / "patches" / "2026-11-27_ai_grant_cycles_down.sql"
+
+
+@postgres_only
+def test_the_ai_cycles_patch_matches_a_fresh_build_and_holds_one_trial_and_one_grant_a_period():
+    """2026-11-27 (the user): the AI allowance follows the subscription - ai_grant's source gains 'trial'
+    (once per company) and 'cycle' (one per billing period, by its end), ai_policy gains cycle_tokens.
+    Down then up lands on a fresh build; the down stops while a trial or cycle grant exists; a second
+    run stops at its guard."""
+    import uuid
+
+    import psycopg
+
+    from minty_db.testing import pg
+
+    base = os.environ.get("MINTY_TEST_PG_DBNAME", "minty_test")
+    name = f"{base}_ai_cycles"
+    try:
+        built = pg.build(name)
+        conn = pg.connect(built.uri)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET search_path = pettycashv3")
+        url = built.uri + "?schema=pettycashv3"
+        assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
+        expected = _catalogue(conn)
+
+        down = _run_cli("patch", str(CYCLES_DOWN), "--apply", database_url=url)
+        assert down.returncode == 0, down.stdout + down.stderr
+        done = _run_cli("patch", str(CYCLES_PATCH), "--apply", database_url=url)
+        assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        got = _catalogue(conn)
+        diff = {k: (expected[k] - got[k], got[k] - expected[k]) for k in expected if expected[k] != got[k]}
+        assert not diff, diff
+
+        company = uuid.uuid4()
+        cur.execute("INSERT INTO entities (id, name) VALUES (%s, 'Shop')", (company,))
+        grant = "INSERT INTO ai_grant (entity_id, tokens_total, expires_at, source) VALUES (%s, %s, %s, %s)"
+        cur.execute(grant, (company, 280000, "2026-12-27T00:00:00Z", "trial"))
+        with pytest.raises(psycopg.errors.UniqueViolation):  # one AI trial per company, ever
+            cur.execute(grant, (company, 280000, "2027-01-27T00:00:00Z", "trial"))
+        cur.execute(grant, (company, 168000, "2027-01-15T00:00:00Z", "cycle"))
+        cur.execute(grant, (company, 280000, "2027-02-15T00:00:00Z", "cycle"))
+        with pytest.raises(psycopg.errors.UniqueViolation):  # one grant per billing period
+            cur.execute(grant, (company, 280000, "2027-02-15T00:00:00Z", "cycle"))
+        cur.execute(grant, (company, 50000, None, "manual"))
+        with pytest.raises(psycopg.errors.CheckViolation):
+            cur.execute(grant, (company, 1, None, "monthly"))
+        cur.execute(
+            "INSERT INTO ai_policy (id, primary_model, limit_rules, model_prices, cycle_tokens) "
+            "VALUES (1, 'gemini-3.5-flash-lite', '[]', '{\"gemini-3.5-flash-lite\": {}}', 280000)"
+        )
+        cur.execute("UPDATE ai_policy SET cycle_tokens = NULL")
+        with pytest.raises(psycopg.errors.CheckViolation):
+            cur.execute("UPDATE ai_policy SET cycle_tokens = 0")
+
+        held = _run_cli("patch", str(CYCLES_DOWN), "--apply", database_url=url)
+        assert held.returncode != 0 and "still holds trial or cycle grants" in held.stdout + held.stderr
+        again = _run_cli("patch", str(CYCLES_PATCH), "--apply", database_url=url)
+        assert again.returncode != 0 and "already in this schema" in again.stdout + again.stderr
+        conn.close()
+    finally:
+        pg.drop_database(name)
+
+
+TRIAL_RESET = ROOT / "minty_db" / "schema" / "patches" / "2026-11-27_ai_trial_reset.sql"
+
+
+@postgres_only
+def test_the_trial_reset_gives_every_open_company_one_fresh_trial_and_ends_the_old_grants():
+    """2026-11-27 (the user): every company starts again on a fresh 30-day AI trial of 280,000
+    tokens; its open one-time default grant ends (kept); an archived company and one with a trial
+    already get none; the policy holds the trial and the period size; a second run changes
+    nothing."""
+    import uuid
+
+    from minty_db.testing import pg
+
+    base = os.environ.get("MINTY_TEST_PG_DBNAME", "minty_test")
+    name = f"{base}_trial_reset"
+    try:
+        built = pg.build(name)
+        conn = pg.connect(built.uri)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("SET search_path = pettycashv3")
+        url = built.uri + "?schema=pettycashv3"
+        assert _run_cli("migrate", "--baseline", database_url=url).returncode == 0
+        cur.execute(
+            "INSERT INTO ai_policy (id, primary_model, default_grant, limit_rules, model_prices) "
+            "VALUES (1, 'gemini-3.5-flash-lite', '{\"reads\": 10}', '[{\"reads\": 5}]', "
+            '\'{"gemini-3.5-flash-lite": {"input": 0.3, "output": 2.5, "cached_input": 0.03}}\')'
+        )
+        shop, archived, tried = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        cur.execute("INSERT INTO entities (id, name) VALUES (%s, 'Shop'), (%s, 'Tried')", (shop, tried))
+        cur.execute("INSERT INTO entities (id, name, archived_at) VALUES (%s, 'Gone', now())", (archived,))
+        cur.execute(
+            "INSERT INTO ai_grant (entity_id, reads_total, source) VALUES (%s, 10, 'default') RETURNING id",
+            (shop,),
+        )
+        old = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO ai_grant (entity_id, tokens_total, source) VALUES (%s, 50000, 'manual') RETURNING id",
+            (shop,),
+        )
+        top_up = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO ai_grant (entity_id, tokens_total, expires_at, source) "
+            "VALUES (%s, 280000, now() + interval '3 days', 'trial')",
+            (tried,),
+        )
+
+        dry = _run_cli("patch", str(TRIAL_RESET), database_url=url)
+        assert dry.returncode == 0, dry.stdout + dry.stderr
+        cur.execute("SELECT count(*) FROM ai_grant WHERE source = 'trial'")
+        assert cur.fetchone()[0] == 1  # a dry run changes nothing
+
+        done = _run_cli("patch", str(TRIAL_RESET), "--apply", database_url=url)
+        assert done.returncode == 0 and "APPLIED" in done.stdout, done.stdout + done.stderr
+        cur.execute(
+            "SELECT entity_id, tokens_total, expires_at > now() + interval '29 days', granted_by "
+            "FROM ai_grant WHERE source = 'trial' AND entity_id <> %s",
+            (tried,),
+        )
+        assert cur.fetchall() == [(shop, 280000, True, "ai_policy")]
+        cur.execute("SELECT ended_by, expires_at <= now() FROM ai_grant WHERE id = %s", (old,))
+        assert cur.fetchone() == ("AI trial reset 2026-11-27", True)
+        cur.execute("SELECT ended_at FROM ai_grant WHERE id = %s", (top_up,))
+        assert cur.fetchone()[0] is None  # a top-up by hand stays
+        cur.execute("SELECT default_grant, cycle_tokens, limit_rules FROM ai_policy")
+        assert cur.fetchone() == ({"tokens": 280000, "days": 30}, 280000, [])
+
+        again = _run_cli("patch", str(TRIAL_RESET), "--apply", database_url=url)
+        assert again.returncode == 0, again.stdout + again.stderr
+        cur.execute("SELECT count(*) FROM ai_grant WHERE source = 'trial'")
+        assert cur.fetchone()[0] == 2
         conn.close()
     finally:
         pg.drop_database(name)

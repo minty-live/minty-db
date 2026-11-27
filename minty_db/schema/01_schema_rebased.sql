@@ -3459,4 +3459,23 @@ ALTER TABLE ai_policy
     AND model_prices ? primary_model
     AND (backup_model IS NULL OR model_prices ? backup_model));
 
+-- ai_grant / ai_policy: the AI allowance follows the subscription (the user, 2026-11-27). AI is its
+-- own product: a company gets one 30-day AI trial (source 'trial', sized by ai_policy.default_grant,
+-- once ever), then one grant per billing period of its subscription (source 'cycle', expiring at the
+-- period's end, no rollover; the first partial period prorated like billing), while it pays and its
+-- access stands. ai_policy.cycle_tokens is a period's tokens; NULL = no period grants. 'default' and
+-- 'manual' stay: 'default' is the one-time grant given before 2026-11-27, 'manual' a top-up by hand.
+-- A read is charged to the grant with room that expires soonest (no expiry last), so top-ups carry
+-- over. minty_shared.django.ai_allowance gives the trial and period grants at the read.
+ALTER TABLE ai_grant
+  DROP CONSTRAINT ck_ai_grant_source,
+  ADD CONSTRAINT ck_ai_grant_source CHECK (source IN ('default', 'manual', 'trial', 'cycle'));
+-- the AI trial is given once per company, ever
+CREATE UNIQUE INDEX uq_ai_grant_one_trial ON ai_grant (entity_id) WHERE source = 'trial';
+-- one period grant per company per billing period (its end), whichever service reads first
+CREATE UNIQUE INDEX uq_ai_grant_cycle ON ai_grant (entity_id, expires_at) WHERE source = 'cycle';
+ALTER TABLE ai_policy
+  ADD COLUMN cycle_tokens INTEGER NULL,
+  ADD CONSTRAINT ck_ai_policy_cycle_tokens CHECK (cycle_tokens IS NULL OR cycle_tokens > 0);
+
 RESET search_path;

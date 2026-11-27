@@ -132,7 +132,9 @@ class AiGrant(models.Model):
     class Meta:
         db_table = 'ai_grant'
         constraints = [
+            models.UniqueConstraint(fields=['entity', 'expires_at'], condition=models.Q(source="cycle"), name='uq_ai_grant_cycle'),
             models.UniqueConstraint(fields=['entity'], condition=models.Q(source="default"), name='uq_ai_grant_one_default'),
+            models.UniqueConstraint(fields=['entity'], condition=models.Q(source="trial"), name='uq_ai_grant_one_trial'),
         ]
 
 
@@ -150,6 +152,7 @@ class AiPolicy(UpdatedAtMixin):
     thinking_level = models.CharField(max_length=10, db_default='low')
     max_file_mb = models.IntegerField(db_default=10)
     model_prices = models.JSONField()
+    cycle_tokens = models.IntegerField(null=True, blank=True)
 
     class Meta:
         db_table = 'ai_policy'

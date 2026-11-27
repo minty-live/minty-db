@@ -103,6 +103,9 @@ PARTIAL_UNIQUE = {
     ),
     # one default AI grant per company, ever (owner, 2026-11-18)
     "uq_ai_grant_one_default": ("((source)::text = 'default'::text)", 'models.Q(source="default")'),
+    # one AI trial per company, ever; one period grant per billing period (the user, 2026-11-27)
+    "uq_ai_grant_one_trial": ("((source)::text = 'trial'::text)", 'models.Q(source="trial")'),
+    "uq_ai_grant_cycle": ("((source)::text = 'cycle'::text)", 'models.Q(source="cycle")'),
 }
 
 # Unique indexes only the database enforces, by name: the model carries no constraint for them.

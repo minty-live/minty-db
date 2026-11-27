@@ -1,6 +1,6 @@
 -- 2026-11-27: Minty's sales-method catalogue (sale_info rows with entity_id NULL), the user's calls:
 --   1. "Payme" takes the brand's spelling "PayMe", "Food Panda" takes "Foodpanda";
---   2. "Deliveroo" (switched off, linked by no company, on no report) is deleted;
+--   2. "Deliveroo" (switched off, on no report) is deleted, and any company's link to it with it;
 --   3. "Bank Transfer" (electronic, bank_transfer_sales) is added: Auto Fill offers it to a retail
 --      shop, a service or a general business, and links Minty's row by name instead of making a
 --      company's own copy. No company had one;
@@ -23,9 +23,8 @@
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM sale_info s
               WHERE s.entity_id IS NULL AND s.value_name = 'deliveroo_sales'
-                AND (EXISTS (SELECT 1 FROM entity_sale_setting e WHERE e.sale_id = s.id)
-                  OR EXISTS (SELECT 1 FROM report_sale r WHERE r.sale_id = s.id))) THEN
-    RAISE EXCEPTION 'Minty''s Deliveroo row is in use: a company links it or a report holds it';
+                AND EXISTS (SELECT 1 FROM report_sale r WHERE r.sale_id = s.id)) THEN
+    RAISE EXCEPTION 'Minty''s Deliveroo row is in use: a report holds an amount for it';
   END IF;
 END $$;
 
@@ -35,7 +34,10 @@ UPDATE sale_info SET sale_name = 'PayMe'
 UPDATE sale_info SET sale_name = 'Foodpanda'
  WHERE entity_id IS NULL AND value_name = 'foodpanda_sales' AND sale_name = 'Food Panda';
 
--- 2. Deliveroo
+-- 2. Deliveroo: a company that switched it on loses it from its list (the user, 2026-11-27: one
+--    company on production, no amounts)
+DELETE FROM entity_sale_setting e USING sale_info s
+ WHERE e.sale_id = s.id AND s.entity_id IS NULL AND s.value_name = 'deliveroo_sales';
 DELETE FROM sale_info WHERE entity_id IS NULL AND value_name = 'deliveroo_sales';
 
 -- 3. Bank Transfer
