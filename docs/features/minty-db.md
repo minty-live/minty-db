@@ -76,6 +76,7 @@ and within a company (`DB_ONLY_UNIQUE`: the APIs check names themselves). The ow
 Minty's are Visa, Mastercard, Alipay, WeChat Pay, UnionPay, Amex, Octopus, Payme, JCB, Food Panda,
 Keeta, OpenRice, Deliveroo and Cash; a case twin of one (MasterCard, PayMe, payme) merges into it
 (a company holding both keeps one link, a report holding both one row, summed); a row nobody uses
+(2026-11-27, `patches/2026-11-27_sale_catalogue_names.sql`: Payme -> PayMe, Food Panda -> Foodpanda, Deliveroo deleted, Bank Transfer added, a company's own spelling of a Minty name ("Pay me", "WeChatPay") merged into it; Minty's `05_sale_catalogue_names.sql` runs the same in rehearse.)
 goes; every other row is its company's own, a name several companies used split into one row each. **GCash moves to Electronic** (owner, 2026-11-12: a card and wallet payment, not delivery) - every
 company's row, so past reports count it there.
 Applied 2026-11-12 on local `postgres` only (3 twins merged, 9 copies, 14 Minty's, 53 companies'
