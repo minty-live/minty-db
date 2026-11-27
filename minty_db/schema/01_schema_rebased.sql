@@ -3071,7 +3071,8 @@ CREATE INDEX idx_contact_match_draft_entity ON contact_match_draft (entity_id);
 CREATE INDEX idx_contact_match_draft_xero   ON contact_match_draft (xero_contact_id);
 
 -- contact_change_log: the same for suppliers: linked to a Xero contact of the same name, created in Xero,
--- merged. A supplier keeps its Minty name, so nothing is ever 'overwritten'
+-- merged. A supplier takes its Xero contact's name at the link (after_name; the user, 2026-11-27), so
+-- nothing is ever 'overwritten'
 CREATE TABLE contact_change_log (
   id             UUID                            NOT NULL DEFAULT gen_random_uuid(),
   entity_id      UUID                            NOT NULL,
